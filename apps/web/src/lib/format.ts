@@ -1,6 +1,14 @@
-import type { Currency } from '@b-hook/contracts'
+import type { Currency, DisplayCurrency } from '@b-hook/contracts'
 
-const ISO_CURRENCY: Partial<Record<Currency, string>> = { USD: 'USD', BRL: 'BRL' }
+/** Moeda de liquidação (USDT, USD, BRL) ou de exibição (USD, EUR, GBP, BRL). */
+export type Money = Currency | DisplayCurrency
+
+const ISO_CURRENCY: Partial<Record<Money, string>> = {
+  USD: 'USD',
+  BRL: 'BRL',
+  EUR: 'EUR',
+  GBP: 'GBP',
+}
 
 /** Casas decimais de preço conforme a grandeza: BTC em 2, XRP em 4, memecoin em até 8. */
 export function priceDecimals(price: number): number {
@@ -12,13 +20,13 @@ export function priceDecimals(price: number): number {
 
 export function formatPrice(
   value: string | number,
-  currency: Currency,
+  currency: Money,
   decimals = priceDecimals(Number(value)),
 ): string {
   const number = Number(value)
   const iso = ISO_CURRENCY[currency]
   if (iso) {
-    return new Intl.NumberFormat(currency === 'BRL' ? 'pt-BR' : 'en-US', {
+    return new Intl.NumberFormat(currency === 'USD' ? 'en-US' : 'pt-BR', {
       style: 'currency',
       currency: iso,
       minimumFractionDigits: decimals,
@@ -30,7 +38,7 @@ export function formatPrice(
 }
 
 /** Saldo, taxa e resultado: dinheiro sempre em 2 casas, independente da grandeza. */
-export function formatMoney(value: string | number, currency: Currency): string {
+export function formatMoney(value: string | number, currency: Money): string {
   return formatPrice(value, currency, 2)
 }
 
@@ -53,4 +61,14 @@ export function formatTime(iso: string): string {
     minute: '2-digit',
     second: '2-digit',
   }).format(new Date(iso))
+}
+
+/** Tempo até o candle fechar: "0:42" no 1m, "14:05" no 15m, "3:12:09" no diário. */
+export function formatCountdown(ms: number): string {
+  const total = Math.max(0, Math.ceil(ms / 1000))
+  const hours = Math.floor(total / 3600)
+  const minutes = Math.floor((total % 3600) / 60)
+  const seconds = String(total % 60).padStart(2, '0')
+  if (hours > 0) return `${hours}:${String(minutes).padStart(2, '0')}:${seconds}`
+  return `${minutes}:${seconds}`
 }

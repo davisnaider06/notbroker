@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatPrice, formatQuantity, priceDecimals } from './format.ts'
+import { formatCountdown, formatPrice, formatQuantity, priceDecimals } from './format.ts'
 
 // Intl usa espaço não separável entre símbolo e valor; normalizamos para comparar.
 const plain = (text: string) => text.replace(/\s/g, ' ')
@@ -19,5 +19,12 @@ describe('format', () => {
 
   it('remove zeros à direita que o numeric do banco devolve', () => {
     expect(formatQuantity('0.1000000000', 5)).toBe('0,1')
+  })
+
+  it('conta o tempo restante do candle arredondando o segundo para cima', () => {
+    expect(formatCountdown(42_300)).toBe('0:43')
+    expect(formatCountdown(14 * 60_000 + 5_000)).toBe('14:05')
+    expect(formatCountdown(3 * 3_600_000 + 12 * 60_000 + 9_000)).toBe('3:12:09')
+    expect(formatCountdown(0)).toBe('0:00')
   })
 })

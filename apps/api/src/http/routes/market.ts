@@ -1,14 +1,17 @@
-import { candlesQuerySchema, type InstrumentDto } from '@b-hook/contracts'
+import { candlesQuerySchema, type FxRatesDto, type InstrumentDto } from '@b-hook/contracts'
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { CATALOG, findInstrument } from '../../market-data/catalog.ts'
+import type { FxSource } from '../../market-data/fx.ts'
 import type { MarketDataHub } from '../../market-data/hub.ts'
 import { AppError } from '../../shared/errors.ts'
 
 const symbolParams = z.object({ symbol: z.string().toUpperCase() })
 
 /** Dados de mercado são públicos: dá para ver o gráfico antes de criar conta. */
-export function registerMarketRoutes(app: FastifyInstance, hub: MarketDataHub): void {
+export function registerMarketRoutes(app: FastifyInstance, hub: MarketDataHub, fx: FxSource): void {
+  app.get('/api/fx', (): Promise<FxRatesDto> => fx.rates())
+
   app.get(
     '/api/instruments',
     async (): Promise<InstrumentDto[]> =>

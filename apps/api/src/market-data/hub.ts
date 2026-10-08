@@ -48,6 +48,10 @@ export class MarketDataHub {
     return this.#lastTicks.get(symbol)?.price
   }
 
+  lastTick(symbol: string): Tick | undefined {
+    return this.#lastTicks.get(symbol)
+  }
+
   candles(instrument: Instrument, interval: CandleInterval): Promise<CandleDto[]> {
     const key = `${instrument.symbol}:${interval}`
     const cached = this.#candleCache.get(key)

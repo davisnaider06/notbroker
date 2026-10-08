@@ -6,12 +6,14 @@ import { registerErrorHandler } from './http/error-handler.ts'
 import { registerMarketRoutes } from './http/routes/market.ts'
 import { registerTradingRoutes } from './http/routes/trading.ts'
 import { registerSocketGateway } from './http/socket-gateway.ts'
+import type { FxSource } from './market-data/fx.ts'
 import type { MarketDataHub } from './market-data/hub.ts'
 import type { OrderService } from './trading/order-service.ts'
 
 export interface AppDependencies {
   auth: Auth
   hub: MarketDataHub
+  fx: FxSource
   orderService: OrderService
 }
 
@@ -29,7 +31,7 @@ export async function buildApp(
 
   app.get('/api/health', async () => ({ status: 'ok' }))
   registerAuthRoutes(app, deps.auth)
-  registerMarketRoutes(app, deps.hub)
+  registerMarketRoutes(app, deps.hub, deps.fx)
   registerTradingRoutes(app, deps.auth, deps.orderService)
   registerSocketGateway(app, deps.auth, deps.hub, deps.orderService)
 

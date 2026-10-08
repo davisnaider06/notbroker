@@ -4,6 +4,7 @@ import { createAuth } from './auth/auth.ts'
 import { loadEnv } from './config/env.ts'
 import { openDatabase } from './db/client.ts'
 import { CATALOG } from './market-data/catalog.ts'
+import { YahooFx } from './market-data/fx.ts'
 import { MarketDataHub } from './market-data/hub.ts'
 import { AlpacaProvider } from './market-data/providers/alpaca.ts'
 import { BinanceProvider } from './market-data/providers/binance.ts'
@@ -35,7 +36,7 @@ logger.info(`ações dos EUA via ${alpaca ? 'Alpaca (WebSocket)' : 'Yahoo (polli
 
 const auth = createAuth(database.db, env)
 const orderService = new OrderService(database.db, hub, logger)
-const app = await buildApp({ auth, hub, orderService }, { logger })
+const app = await buildApp({ auth, hub, fx: new YahooFx(logger), orderService }, { logger })
 
 await orderService.start()
 hub.start(CATALOG)

@@ -76,9 +76,10 @@ export function registerSocketGateway(
         if (!findInstrument(symbol)) continue
         if (message.type === 'subscribe') {
           client.symbols.add(symbol)
-          const price = hub.lastPrice(symbol)
-          // Snapshot imediato para a tela não ficar vazia até o próximo negócio.
-          if (price) send(socket, { type: 'tick', symbol, price, time: Date.now() })
+          // Snapshot imediato para a tela não ficar vazia até o próximo negócio. Vai com o horário
+          // real do negócio, não o de agora: o gráfico usa esse tempo para escolher o candle.
+          const tick = hub.lastTick(symbol)
+          if (tick) send(socket, { type: 'tick', ...tick })
         } else {
           client.symbols.delete(symbol)
         }

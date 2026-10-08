@@ -1,5 +1,5 @@
-import { mkdirSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { basename, resolve } from 'node:path'
 import { PGlite } from '@electric-sql/pglite'
 import type { PgDatabase, PgQueryResultHKT } from 'drizzle-orm/pg-core'
 import { drizzle as drizzlePglite } from 'drizzle-orm/pglite'
@@ -36,9 +36,56 @@ export async function openDatabase(options: {
     return { db, close: () => client.end() }
   }
 
-  if (options.pgliteDir !== 'memory://') mkdirSync(options.pgliteDir, { recursive: true })
+  if (options.pgliteDir === 'memory://') {
+    const client = new PGlite(options.pgliteDir)
+    const db = drizzlePglite({ client, schema })
+    await migratePglite(db, { migrationsFolder })
+    return { db, close: () => client.close() }
+  }
+
+  mkdirSync(options.pgliteDir, { recursive: true })
+  const releaseLock = acquireDirLock(options.pgliteDir)
   const client = new PGlite(options.pgliteDir)
   const db = drizzlePglite({ client, schema })
   await migratePglite(db, { migrationsFolder })
-  return { db, close: () => client.close() }
+  return {
+    db,
+    close: async () => {
+      await client.close()
+      releaseLock()
+    },
+  }
+}
+
+/**
+ * PGlite não trava a pasta: dois processos abrindo o mesmo diretório (um `node` órfão de outra
+ * sessão, por exemplo) perdem escritas em silêncio e podem corromper o banco. O lock guarda o PID
+ * do dono; se esse processo já morreu (kill forçado, restart do --watch), o lock é retomado.
+ */
+function acquireDirLock(dir: string): () => void {
+  const lockPath = resolve(dir, '..', `${basename(dir)}.lock`)
+  try {
+    writeFileSync(lockPath, String(process.pid), { flag: 'wx' })
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+    const owner = Number(readFileSync(lockPath, 'utf8'))
+    if (owner !== process.pid && isAlive(owner)) {
+      throw new Error(
+        `O banco em ${dir} já está aberto pelo processo ${owner}. Encerre-o antes de subir outra API.`,
+      )
+    }
+    writeFileSync(lockPath, String(process.pid))
+  }
+  return () => rmSync(lockPath, { force: true })
+}
+
+function isAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    // EPERM: o processo existe, só não é nosso.
+    return (error as NodeJS.ErrnoException).code === 'EPERM'
+  }
 }

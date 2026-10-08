@@ -1,6 +1,18 @@
 import { type InstrumentDto, MARKETS, type Market } from '@b-hook/contracts'
-import { formatPrice } from '../../lib/format.ts'
+import {
+  type DisplayChoice,
+  setDisplayCurrency,
+  useMoneyFormatter,
+} from '../../lib/display-currency.ts'
 import { useLivePrice } from '../../lib/market-stream.ts'
+
+const DISPLAY_OPTIONS: { value: DisplayChoice; label: string }[] = [
+  { value: 'ORIGINAL', label: 'Orig.' },
+  { value: 'USD', label: 'USD' },
+  { value: 'EUR', label: 'EUR' },
+  { value: 'GBP', label: 'GBP' },
+  { value: 'BRL', label: 'BRL' },
+]
 
 const MARKET_LABEL: Record<Market, string> = { CRYPTO: 'Cripto', US: 'EUA', B3: 'B3' }
 
@@ -13,6 +25,7 @@ interface Props {
 export function InstrumentList({ instruments, selected, onSelect }: Props) {
   return (
     <nav>
+      <CurrencySwitch />
       {MARKETS.map((market) => (
         <section key={market}>
           <h2 className="section-title">{MARKET_LABEL[market]}</h2>
@@ -45,6 +58,7 @@ function InstrumentRow({
 }) {
   const live = useLivePrice(instrument.symbol)
   const price = live?.price ?? instrument.lastPrice
+  const money = useMoneyFormatter()
 
   return (
     <li>
@@ -59,9 +73,32 @@ function InstrumentRow({
         </span>
         {/* key no tick reinicia a animação de flash a cada mudança de preço */}
         <span key={live?.time} className={`price ${live?.direction ?? 'flat'}`}>
-          {price == null ? '—' : formatPrice(price, instrument.currency)}
+          {price == null ? '—' : money.format(price, instrument.currency)}
         </span>
       </button>
     </li>
+  )
+}
+
+/** Só muda a exibição dos preços; ordens continuam na moeda em que o ativo é negociado. */
+function CurrencySwitch() {
+  const { display } = useMoneyFormatter()
+  return (
+    <div className="currency-switch">
+      <span className="muted small">Exibir preços em</span>
+      <div className="segmented wide">
+        {DISPLAY_OPTIONS.map((option) => (
+          <button
+            key={option.value}
+            type="button"
+            className={option.value === display ? 'active' : ''}
+            title={option.value === 'ORIGINAL' ? 'Moeda em que cada ativo é negociado' : undefined}
+            onClick={() => setDisplayCurrency(option.value)}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+    </div>
   )
 }

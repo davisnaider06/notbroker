@@ -1,5 +1,5 @@
 import type { ClientMessage, OrderDto, ServerMessage } from '@b-hook/contracts'
-import { useEffect, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useMemo, useSyncExternalStore } from 'react'
 
 export interface LivePrice {
   price: number
@@ -123,4 +123,39 @@ export function useLivePrice(symbol: string): LivePrice | undefined {
     (listener) => marketStream.watchPrice(symbol, listener),
     () => marketStream.price(symbol),
   )
+}
+
+/**
+ * Preço ao vivo de vários ativos de uma vez (somatório de posições, por exemplo). O snapshot é uma
+ * string para o useSyncExternalStore comparar por valor e só re-renderizar quando algo mudar.
+ */
+export function useLivePrices(symbols: readonly string[]): ReadonlyMap<string, number> {
+  const key = symbols.join(',')
+  const subscribe = useCallback(
+    (listener: () => void) => {
+      const stops = key
+        .split(',')
+        .filter(Boolean)
+        .map((symbol) => marketStream.watchPrice(symbol, listener))
+      return () => {
+        for (const stop of stops) stop()
+      }
+    },
+    [key],
+  )
+  const snapshot = useSyncExternalStore(subscribe, () =>
+    key
+      .split(',')
+      .filter(Boolean)
+      .map((symbol) => `${symbol}=${marketStream.price(symbol)?.price ?? ''}`)
+      .join('|'),
+  )
+  return useMemo(() => {
+    const prices = new Map<string, number>()
+    for (const entry of snapshot.split('|')) {
+      const [symbol, price] = entry.split('=')
+      if (symbol && price) prices.set(symbol, Number(price))
+    }
+    return prices
+  }, [snapshot])
 }

@@ -71,7 +71,11 @@ beforeAll(async () => {
   const auth = createAuth(database.db, env)
   const orderService = new OrderService(database.db, hub, console)
   await orderService.start()
-  app = await buildApp({ auth, hub, orderService })
+  /** Câmbio fixo: o teste não sai para a rede. */
+  const fx = {
+    rates: async () => ({ perUsd: { USD: 1, EUR: 0.9, GBP: 0.8, BRL: 5 }, updatedAt: 0 }),
+  }
+  app = await buildApp({ auth, hub, fx, orderService })
 
   const signUp = await app.inject({
     method: 'POST',

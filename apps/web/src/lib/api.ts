@@ -1,6 +1,7 @@
 import type {
   CandleDto,
   CandleInterval,
+  FxRatesDto,
   InstrumentDto,
   OrderDto,
   PlaceOrderInput,
@@ -43,6 +44,7 @@ export const api = {
     request<CandleDto[]>(`/api/instruments/${symbol}/candles?interval=${interval}`),
   portfolio: () => request<{ wallets: WalletDto[]; positions: PositionDto[] }>('/api/portfolio'),
   orders: () => request<OrderDto[]>('/api/orders'),
+  fx: () => request<FxRatesDto>('/api/fx'),
   placeOrder: (input: PlaceOrderInput) =>
     request<OrderDto>('/api/orders', { method: 'POST', body: JSON.stringify(input) }),
   cancelOrder: (id: string) => request<OrderDto>(`/api/orders/${id}/cancel`, { method: 'POST' }),
@@ -53,4 +55,5 @@ export const queryKeys = {
   candles: (symbol: string, interval: CandleInterval) => ['candles', symbol, interval] as const,
   portfolio: ['portfolio'] as const,
   orders: ['orders'] as const,
+  fx: ['fx'] as const,
 }

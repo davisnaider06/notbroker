@@ -8,7 +8,12 @@ import { fetchJson, type Logger, type MarketDataProvider, type TickListener } fr
  * Cotação da B3 vem com atraso de ~15 min. Pode mudar sem aviso; por isso fica isolado aqui.
  */
 const CHART_URL = 'https://query1.finance.yahoo.com/v8/finance/chart'
-const HEADERS = { 'User-Agent': 'Mozilla/5.0 (B-Hook paper trading)' }
+/**
+ * Sem keep-alive: entre um polling e outro (15 s) o Yahoo derruba a conexão ociosa sem avisar, e o
+ * fetch seguinte reaproveita o socket morto e fica pendurado até o timeout (~1 em 4 requisições).
+ * Conexão nova custa ~1 s de TLS, irrelevante para polling.
+ */
+const HEADERS = { 'User-Agent': 'Mozilla/5.0 (B-Hook paper trading)', Connection: 'close' }
 
 const RANGES: Record<CandleInterval, { interval: string; range: string }> = {
   '1m': { interval: '1m', range: '5d' },
@@ -83,6 +88,12 @@ export function parseYahooChart(payload: unknown): {
     time: result.meta.regularMarketTime * 1000,
     candles,
   }
+}
+
+/** Último preço de qualquer símbolo do Yahoo (câmbio usa "EURUSD=X", "BRL=X"...). */
+export async function fetchYahooPrice(symbol: string): Promise<number> {
+  const url = `${CHART_URL}/${encodeURIComponent(symbol)}?interval=1d&range=1d`
+  return parseYahooChart(await fetchJson('yahoo', url, { headers: HEADERS })).price
 }
 
 export class YahooProvider implements MarketDataProvider {
