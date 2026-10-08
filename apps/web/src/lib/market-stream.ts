@@ -4,6 +4,10 @@ import { useCallback, useEffect, useMemo, useSyncExternalStore } from 'react'
 export interface LivePrice {
   price: number
   time: number
+  /** Abertura, máxima e mínima dos negócios desde a última atualização (~250 ms). */
+  open: number
+  high: number
+  low: number
   /** Direção em relação ao tick anterior, para o "flash" verde/vermelho. */
   direction: 'up' | 'down' | 'flat'
 }
@@ -96,7 +100,14 @@ class MarketStream {
       const previous = this.#prices.get(message.symbol)?.price
       const direction =
         previous === undefined || previous === price ? 'flat' : price > previous ? 'up' : 'down'
-      this.#prices.set(message.symbol, { price, time: message.time, direction })
+      this.#prices.set(message.symbol, {
+        price,
+        time: message.time,
+        open: Number(message.open),
+        high: Number(message.high),
+        low: Number(message.low),
+        direction,
+      })
       for (const listener of this.#priceListeners.get(message.symbol) ?? []) listener()
     } else if (message.type === 'trade') {
       for (const listener of this.#tradeListeners) listener(message.trade)

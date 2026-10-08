@@ -639,3 +639,27 @@ td {
   background: var(--down-soft);
   color: var(--down);
 }
+
+/* Mercado com cotação atrasada (B3 pelo Yahoo) */
+.delay-badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 6px;
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  vertical-align: middle;
+}
+
+.delay-warning {
+  padding: 8px 10px;
+  border-left: 3px solid var(--accent);
+  border-radius: 3px;
+  background: var(--surface-2);
+  font-size: 12px;
+  line-height: 1.4;
+}

@@ -4,6 +4,7 @@ import {
   type Expiration,
   expiryFor,
   type InstrumentDto,
+  MARKET_DATA_DELAY_MINUTES,
   MIN_STAKE,
   PAYOUT_RATE,
   type TradeDirection,
@@ -126,6 +127,13 @@ export function TradeTicket({ instrument }: { instrument: InstrumentDto }) {
         <dt>Retorno total</dt>
         <dd>{stake ? money(Number(stake) + profit) : '—'}</dd>
       </dl>
+
+      {MARKET_DATA_DELAY_MINUTES[instrument.market] > 0 && (
+        <p className="delay-warning">
+          Cotação da {instrument.market} com {MARKET_DATA_DELAY_MINUTES[instrument.market]} min de
+          atraso: a operação abre e fecha nesse preço, não no da bolsa agora.
+        </p>
+      )}
 
       <div className="direction-buttons">
         <button

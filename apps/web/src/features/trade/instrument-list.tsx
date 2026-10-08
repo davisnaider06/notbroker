@@ -1,4 +1,9 @@
-import { type InstrumentDto, MARKETS, type Market } from '@b-hook/contracts'
+import {
+  type InstrumentDto,
+  MARKET_DATA_DELAY_MINUTES,
+  MARKETS,
+  type Market,
+} from '@b-hook/contracts'
 import {
   type DisplayChoice,
   setDisplayCurrency,
@@ -28,7 +33,12 @@ export function InstrumentList({ instruments, selected, onSelect }: Props) {
       <CurrencySwitch />
       {MARKETS.map((market) => (
         <section key={market}>
-          <h2 className="section-title">{MARKET_LABEL[market]}</h2>
+          <h2 className="section-title">
+            {MARKET_LABEL[market]}
+            {MARKET_DATA_DELAY_MINUTES[market] > 0 && (
+              <span className="delay-badge">atraso {MARKET_DATA_DELAY_MINUTES[market]} min</span>
+            )}
+          </h2>
           <ul className="instrument-list">
             {instruments
               .filter((instrument) => instrument.market === market)

@@ -28,7 +28,9 @@ export function AuthScreen() {
     <main className="auth">
       <form className="auth-card" onSubmit={handleSubmit}>
         <h1 className="brand">B-Hook</h1>
-        <p className="muted">Corretora simulada. Dinheiro de mentira, cotação de verdade.</p>
+        <p className="muted">
+          Casa de opções binárias simulada. Dinheiro de mentira, cotação de verdade.
+        </p>
 
         {mode === 'sign-up' && (
           <label>

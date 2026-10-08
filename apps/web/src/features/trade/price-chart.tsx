@@ -3,6 +3,7 @@ import {
   type CandleDto,
   type CandleInterval,
   type InstrumentDto,
+  MARKET_DATA_DELAY_MINUTES,
 } from '@b-hook/contracts'
 import { useQuery } from '@tanstack/react-query'
 import {
@@ -157,18 +158,20 @@ export function PriceChart({ instrument }: { instrument: InstrumentDto }) {
       const start = Math.floor(tick.time / 1000 / bucket) * bucket
       if (start < last.time) return
       const sameCandle = start === last.time
+      // Máxima/mínima vêm de todos os negócios da janela, não só do último: picos rápidos aparecem
+      // no pavio. O servidor nunca junta numa janela negócios de minutos diferentes.
       lastCandleRef.current = sameCandle
         ? {
             ...last,
-            high: Math.max(last.high, tick.price),
-            low: Math.min(last.low, tick.price),
+            high: Math.max(last.high, tick.high),
+            low: Math.min(last.low, tick.low),
             close: tick.price,
           }
         : {
             time: start,
-            open: tick.price,
-            high: tick.price,
-            low: tick.price,
+            open: tick.open,
+            high: tick.high,
+            low: tick.low,
             close: tick.price,
             volume: 0,
           }
@@ -258,6 +261,11 @@ export function PriceChart({ instrument }: { instrument: InstrumentDto }) {
         <div>
           <h1>{instrument.symbol}</h1>
           <span className="muted">{instrument.name}</span>
+          {MARKET_DATA_DELAY_MINUTES[instrument.market] > 0 && (
+            <span className="delay-badge">
+              cotação com {MARKET_DATA_DELAY_MINUTES[instrument.market]} min de atraso
+            </span>
+          )}
         </div>
         <strong key={live?.time} className={`last-price price ${live?.direction ?? 'flat'}`}>
           {live || instrument.lastPrice
