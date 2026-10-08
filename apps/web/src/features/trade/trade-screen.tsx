@@ -5,8 +5,8 @@ import { authClient } from '../../lib/auth-client.ts'
 import { marketStream, useSubscription } from '../../lib/market-stream.ts'
 import { AccountPanel } from './account-panel.tsx'
 import { InstrumentList } from './instrument-list.tsx'
-import { OrderTicket } from './order-ticket.tsx'
 import { PriceChart } from './price-chart.tsx'
+import { TradeTicket } from './trade-ticket.tsx'
 import { WalletBar } from './wallet-bar.tsx'
 
 export function TradeScreen({ user }: { user: { name: string; email: string } }) {
@@ -16,12 +16,13 @@ export function TradeScreen({ user }: { user: { name: string; email: string } })
 
   useEffect(() => {
     marketStream.connect()
-    const stopOrders = marketStream.onOrder(() => {
-      void queryClient.invalidateQueries({ queryKey: queryKeys.orders })
-      void queryClient.invalidateQueries({ queryKey: queryKeys.portfolio })
+    // Abriu ou fechou operação: saldo e lista mudam.
+    const stopTrades = marketStream.onTrade(() => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.trades })
+      void queryClient.invalidateQueries({ queryKey: queryKeys.account })
     })
     return () => {
-      stopOrders()
+      stopTrades()
       marketStream.disconnect()
     }
   }, [queryClient])
@@ -60,7 +61,7 @@ export function TradeScreen({ user }: { user: { name: string; email: string } })
         <AccountPanel instruments={instruments.data ?? []} />
       </main>
 
-      <section className="ticket">{instrument && <OrderTicket instrument={instrument} />}</section>
+      <section className="ticket">{instrument && <TradeTicket instrument={instrument} />}</section>
     </div>
   )
 }

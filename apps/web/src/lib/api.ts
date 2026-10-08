@@ -1,12 +1,11 @@
 import type {
+  AccountDto,
   CandleDto,
   CandleInterval,
   FxRatesDto,
   InstrumentDto,
-  OrderDto,
-  PlaceOrderInput,
-  PositionDto,
-  WalletDto,
+  OpenTradeInput,
+  TradeDto,
 } from '@b-hook/contracts'
 
 export class ApiError extends Error {
@@ -42,18 +41,17 @@ export const api = {
   instruments: () => request<InstrumentDto[]>('/api/instruments'),
   candles: (symbol: string, interval: CandleInterval) =>
     request<CandleDto[]>(`/api/instruments/${symbol}/candles?interval=${interval}`),
-  portfolio: () => request<{ wallets: WalletDto[]; positions: PositionDto[] }>('/api/portfolio'),
-  orders: () => request<OrderDto[]>('/api/orders'),
   fx: () => request<FxRatesDto>('/api/fx'),
-  placeOrder: (input: PlaceOrderInput) =>
-    request<OrderDto>('/api/orders', { method: 'POST', body: JSON.stringify(input) }),
-  cancelOrder: (id: string) => request<OrderDto>(`/api/orders/${id}/cancel`, { method: 'POST' }),
+  account: () => request<AccountDto>('/api/account'),
+  trades: () => request<TradeDto[]>('/api/trades'),
+  openTrade: (input: OpenTradeInput) =>
+    request<TradeDto>('/api/trades', { method: 'POST', body: JSON.stringify(input) }),
 }
 
 export const queryKeys = {
   instruments: ['instruments'] as const,
   candles: (symbol: string, interval: CandleInterval) => ['candles', symbol, interval] as const,
-  portfolio: ['portfolio'] as const,
-  orders: ['orders'] as const,
+  account: ['account'] as const,
+  trades: ['trades'] as const,
   fx: ['fx'] as const,
 }

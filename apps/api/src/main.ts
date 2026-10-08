@@ -10,7 +10,7 @@ import { AlpacaProvider } from './market-data/providers/alpaca.ts'
 import { BinanceProvider } from './market-data/providers/binance.ts'
 import { YahooProvider } from './market-data/providers/yahoo.ts'
 import { syncCatalog } from './trading/accounts.ts'
-import { OrderService } from './trading/order-service.ts'
+import { BinaryService } from './trading/binary-service.ts'
 
 const env = loadEnv()
 const logger = pino(
@@ -35,14 +35,15 @@ const hub = new MarketDataHub({
 logger.info(`ações dos EUA via ${alpaca ? 'Alpaca (WebSocket)' : 'Yahoo (polling)'}`)
 
 const auth = createAuth(database.db, env)
-const orderService = new OrderService(database.db, hub, logger)
-const app = await buildApp({ auth, hub, fx: new YahooFx(logger), orderService }, { logger })
+const binaryService = new BinaryService(database.db, hub, logger)
+const app = await buildApp({ auth, hub, fx: new YahooFx(logger), binaryService }, { logger })
 
-await orderService.start()
+await binaryService.start()
 hub.start(CATALOG)
 await app.listen({ port: env.PORT, host: '0.0.0.0' })
 
 const shutdown = async () => {
+  binaryService.stop()
   hub.stop()
   await app.close()
   await database.close()

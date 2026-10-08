@@ -553,3 +553,89 @@ td {
     flex-wrap: wrap;
   }
 }
+
+/* Boleta de binárias */
+.field {
+  display: grid;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.stake-chips {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  margin-top: -6px;
+}
+
+.stake-chips .ghost {
+  padding: 5px 0;
+}
+
+.direction-buttons {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.direction-buttons .primary {
+  display: grid;
+  gap: 2px;
+  padding: 14px 8px;
+  font-size: 16px;
+}
+
+.direction-buttons .primary .small {
+  font-weight: 500;
+  opacity: 0.8;
+}
+
+.direction-buttons .primary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.result-banner {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+}
+
+.result-banner.up {
+  background: var(--up-soft);
+  border-color: var(--up);
+}
+
+.result-banner.down {
+  background: var(--down-soft);
+  border-color: var(--down);
+}
+
+.result-banner.up strong {
+  color: var(--up);
+}
+
+.result-banner.down strong {
+  color: var(--down);
+}
+
+.result-tag {
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 11px;
+  font-weight: 700;
+  background: var(--surface-2);
+}
+
+.result-tag.won {
+  background: var(--up-soft);
+  color: var(--up);
+}
+
+.result-tag.lost {
+  background: var(--down-soft);
+  color: var(--down);
+}

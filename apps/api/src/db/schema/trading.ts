@@ -1,4 +1,4 @@
-import { CURRENCIES, MARKETS, ORDER_SIDES, ORDER_STATUSES, ORDER_TYPES } from '@b-hook/contracts'
+import { CURRENCIES, MARKETS, TRADE_DIRECTIONS, TRADE_STATUSES } from '@b-hook/contracts'
 import {
   index,
   integer,
@@ -14,9 +14,8 @@ import { user } from './auth.ts'
 
 export const marketEnum = pgEnum('market', MARKETS)
 export const currencyEnum = pgEnum('currency', CURRENCIES)
-export const orderSideEnum = pgEnum('order_side', ORDER_SIDES)
-export const orderTypeEnum = pgEnum('order_type', ORDER_TYPES)
-export const orderStatusEnum = pgEnum('order_status', ORDER_STATUSES)
+export const tradeDirectionEnum = pgEnum('trade_direction', TRADE_DIRECTIONS)
+export const tradeStatusEnum = pgEnum('trade_status', TRADE_STATUSES)
 
 /** numeric(30,10) cobre de satoshi a ações de 5 dígitos sem perder precisão. Drizzle devolve string. */
 const decimal = (name: string) => numeric(name, { precision: 30, scale: 10 })
@@ -34,7 +33,10 @@ export const instruments = pgTable('instruments', {
   quantityDecimals: integer('quantity_decimals').notNull(),
 })
 
-/** `balance` é o saldo livre; `locked` é o que está reservado por ordens de compra limitadas. */
+/**
+ * Saldo da conta. Na casa de binárias só existe a carteira em BRL; `locked` sobrou do modelo
+ * anterior e fica sempre zero (o valor de uma operação aberta já saiu do saldo).
+ */
 export const wallets = pgTable(
   'wallets',
   {
@@ -46,45 +48,32 @@ export const wallets = pgTable(
   (table) => [primaryKey({ columns: [table.userId, table.currency] })],
 )
 
-export const positions = pgTable(
-  'positions',
-  {
-    userId: userRef(),
-    symbol: text('symbol')
-      .notNull()
-      .references(() => instruments.symbol),
-    quantity: decimal('quantity').notNull(),
-    lockedQuantity: decimal('locked_quantity').notNull().default('0'),
-    averagePrice: decimal('average_price').notNull(),
-    realizedPnl: decimal('realized_pnl').notNull().default('0'),
-    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-  },
-  (table) => [primaryKey({ columns: [table.userId, table.symbol] })],
-)
-
-export const orders = pgTable(
-  'orders',
+/**
+ * Operação de opção binária. O valor apostado sai do saldo na abertura; no fechamento volta
+ * valor + payout (win), só o valor (empate/estorno) ou nada (loss).
+ */
+export const binaryTrades = pgTable(
+  'binary_trades',
   {
     id: uuid('id').primaryKey().defaultRandom(),
     userId: userRef(),
     symbol: text('symbol')
       .notNull()
       .references(() => instruments.symbol),
-    side: orderSideEnum('side').notNull(),
-    type: orderTypeEnum('type').notNull(),
-    status: orderStatusEnum('status').notNull(),
-    quantity: decimal('quantity').notNull(),
-    limitPrice: decimal('limit_price'),
-    /** Caixa reservado por uma compra limitada, devolvido no cancelamento ou no fill. */
-    reserved: decimal('reserved'),
-    fillPrice: decimal('fill_price'),
-    fee: decimal('fee'),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-    filledAt: timestamp('filled_at', { withTimezone: true }),
-    canceledAt: timestamp('canceled_at', { withTimezone: true }),
+    direction: tradeDirectionEnum('direction').notNull(),
+    status: tradeStatusEnum('status').notNull(),
+    stake: decimal('stake').notNull(),
+    /** Gravado por operação: mudar o payout da casa não altera o que já foi aberto. */
+    payoutRate: decimal('payout_rate').notNull(),
+    entryPrice: decimal('entry_price').notNull(),
+    exitPrice: decimal('exit_price'),
+    payout: decimal('payout'),
+    openedAt: timestamp('opened_at', { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    settledAt: timestamp('settled_at', { withTimezone: true }),
   },
   (table) => [
-    index('orders_user_created_idx').on(table.userId, table.createdAt),
-    index('orders_status_symbol_idx').on(table.status, table.symbol),
+    index('binary_trades_user_opened_idx').on(table.userId, table.openedAt),
+    index('binary_trades_status_idx').on(table.status),
   ],
 )

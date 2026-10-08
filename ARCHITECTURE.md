@@ -1,37 +1,37 @@
 # Arquitetura
 
-B-Hook é uma corretora simulada (paper trading): cotação real, dinheiro fictício. Multiusuário
+B-Hook é uma casa de opções binárias simulada: cotação real, dinheiro fictício. Multiusuário
 desde o início, custo zero de infraestrutura e de dados.
 
 ## Visão geral
 
 ```
             Binance WS ─┐
-    Alpaca WS (opcional)─┼─► MarketDataHub ──┬─► MatchingEngine ──► OrderService ──► Postgres
-     Yahoo (polling)  ──┘   (último preço)   │      (limites)        (transações)
+    Alpaca WS (opcional)─┼─► MarketDataHub ──┬─► BinaryService ──► Postgres
+     Yahoo (polling)  ──┘   (último preço)   │   (expiração)      (transações)
                                              └─► SocketGateway ──► navegador (/ws)
 ```
 
 - **`MarketDataHub`** é o único ponto de preço. Os provedores empurram ticks; o hub guarda o último
   preço de cada ativo e repassa para quem escuta.
-- **`MatchingEngine`** mantém as ordens limitadas abertas em memória, indexadas por símbolo. Quando
-  um tick cruza o limite, entrega a ordem ao `OrderService`. O banco é a fonte da verdade: o índice
-  é reconstruído a partir dele no boot.
-- **`OrderService`** faz toda movimentação de dinheiro e posição dentro de transação, com
-  `SELECT ... FOR UPDATE` sempre na mesma ordem (carteira → posição) para não haver deadlock.
+- **`BinaryService`** abre e liquida as operações. Abrir debita o valor do saldo dentro de transação
+  (`SELECT ... FOR UPDATE` na carteira). As abertas ficam num índice em memória; a cada 200 ms o que
+  venceu é liquidado. O preço de saída é o vigente na expiração: o primeiro tick posterior a ela
+  congela o preço anterior. No boot, o índice é reconstruído do banco, e o que venceu com o servidor
+  fora do ar é estornado.
 - **`SocketGateway`** agrega ticks a cada 250 ms (BTC chega a dezenas de negócios por segundo) e
-  envia para cada aba só os símbolos que ela assinou, mais os eventos das ordens do próprio usuário.
+  envia para cada aba só os símbolos que ela assinou, mais a abertura e o fechamento das operações do próprio usuário.
 
 ## Estrutura
 
 ```
-packages/contracts   Tipos e schemas Zod compartilhados entre API e web (DTOs, mensagens WS, taxas)
+packages/contracts   Tipos e schemas Zod compartilhados entre API e web (DTOs, mensagens WS, regras da casa)
 apps/api
   src/config         Variáveis de ambiente validadas no boot
   src/db             Schema Drizzle e conexão (PGlite ou Postgres)
   src/auth           Better Auth + integração com Fastify
   src/market-data    Catálogo, hub e um arquivo por provedor
-  src/trading        Regras de dinheiro (ledger), matching e serviço de ordens
+  src/trading        Contas e serviço de opções binárias
   src/http           Rotas, tratamento de erro e gateway WebSocket
   drizzle/           Migrations SQL geradas (versionadas)
 apps/web
@@ -69,20 +69,23 @@ Para a B3 não existe WebSocket real-time gratuito. O brapi.dev grátis só entr
 atualizado a cada 30 min, o que é pior que o Yahoo para treinar. Quando houver orçamento, basta
 escrever outro `MarketDataProvider` e trocar a rota de `B3` em `main.ts`.
 
-## Regras de simulação
+## Regras da casa
 
-- Ordem a mercado executa no último preço recebido. Sem preço, é recusada (409).
-- Ordem limitada de compra **reserva** `quantidade × limite × (1 + taxa)` do saldo. A venda limitada
-  trava a quantidade na posição. Cancelar ou executar devolve a reserva.
-- A limitada executa no preço do tick que cruzou: compra quando preço ≤ limite, venda quando ≥.
-- Taxas em `packages/contracts/src/markets.ts`: Binance 0,1%, EUA 0%, B3 0,03%.
-- Sem venda a descoberto e sem alavancagem.
-- Saldo inicial: 10.000 USDT, 10.000 USD, R$ 50.000.
+Ficam em `packages/contracts/src/trades.ts`, para a tela calcular com a mesma regra do servidor.
+
+- Conta única em BRL, começando em R$ 10.000. O saldo só muda ao abrir (sai o valor) e ao fechar.
+- **Compra** ganha se o preço de saída ficar acima do de entrada; **venda** ganha se ficar abaixo.
+- Win devolve valor + 70% (payout gravado por operação). Loss perde o valor. Empate devolve o valor.
+- Expiração no fechamento da vela do tempo escolhido (1m, 5m, 15m, 1h), alinhada ao relógio UTC.
+  Com menos de 30 s para a vela fechar, a operação vai para a vela seguinte.
+- Sem cotação, ou cotação com mais de 20 min (mercado fechado), a entrada é recusada (409).
+- Valor mínimo R$ 1, no máximo 2 casas decimais.
 
 ## Limites conhecidos
 
 - O catálogo é fixo em código (`market-data/catalog.ts`) e acompanhado inteiro o tempo todo. Isso é
   ótimo para 15 ativos. Com centenas, o hub precisa assinar sob demanda.
-- Não há bloqueio por horário de pregão: fora do horário, a ordem executa no último preço.
-- O matching roda em um processo só. Escalar horizontalmente exige mover o livro e os ticks para um
-  pub/sub (Redis, por exemplo).
+- "Mercado fechado" é inferido pela idade da cotação, não por calendário de pregão.
+- A B3 vem do Yahoo com ~15 min de atraso: a operação abre e fecha nesse preço atrasado.
+- A liquidação roda em um processo só. Escalar horizontalmente exige mover as operações abertas
+  e os ticks para um pub/sub (Redis, por exemplo).

@@ -1,45 +1,50 @@
-import type { InstrumentDto, OrderDto, PositionDto } from '@b-hook/contracts'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import {
+  ACCOUNT_CURRENCY,
+  type Currency,
+  type InstrumentDto,
+  previewOutcome,
+  type TradeDirection,
+  type TradeDto,
+  type TradeStatus,
+} from '@b-hook/contracts'
+import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { api, queryKeys } from '../../lib/api.ts'
-import { formatMoney, formatPrice, formatQuantity, formatTime } from '../../lib/format.ts'
+import { formatCountdown, formatMoney, formatPrice, formatTime } from '../../lib/format.ts'
 import { useLivePrice } from '../../lib/market-stream.ts'
+import { useNow } from '../../lib/use-now.ts'
 
-type Tab = 'positions' | 'open' | 'history'
+type Tab = 'open' | 'history'
 
-const SIDE_LABEL = { buy: 'Compra', sell: 'Venda' } as const
-const TYPE_LABEL = { market: 'Mercado', limit: 'Limitada' } as const
-const STATUS_LABEL = { open: 'Aberta', filled: 'Executada', canceled: 'Cancelada' } as const
+const DIRECTION_LABEL: Record<TradeDirection, string> = { buy: '▲ Compra', sell: '▼ Venda' }
+
+const RESULT_LABEL: Record<Exclude<TradeStatus, 'open'>, string> = {
+  won: 'WIN',
+  lost: 'LOSS',
+  draw: 'EMPATE',
+  refunded: 'ESTORNADA',
+}
+
+const money = (value: string | number) => formatMoney(value, ACCOUNT_CURRENCY)
 
 export function AccountPanel({ instruments }: { instruments: InstrumentDto[] }) {
-  const [tab, setTab] = useState<Tab>('positions')
-  const portfolio = useQuery({ queryKey: queryKeys.portfolio, queryFn: api.portfolio })
-  const orders = useQuery({ queryKey: queryKeys.orders, queryFn: api.orders })
+  const [tab, setTab] = useState<Tab>('open')
+  const trades = useQuery({ queryKey: queryKeys.trades, queryFn: api.trades })
 
-  const decimalsOf = (symbol: string) =>
-    instruments.find((instrument) => instrument.symbol === symbol)?.quantityDecimals ?? 8
-  const positions = (portfolio.data?.positions ?? []).filter(
-    (position) => Number(position.quantity) > 0 || Number(position.realizedPnl) !== 0,
-  )
-  const openOrders = (orders.data ?? []).filter((order) => order.status === 'open')
-  const history = (orders.data ?? []).filter((order) => order.status !== 'open')
+  const currencyOf = (symbol: string): Currency =>
+    instruments.find((instrument) => instrument.symbol === symbol)?.currency ?? 'USD'
+  const open = (trades.data ?? []).filter((trade) => trade.status === 'open')
+  const history = (trades.data ?? []).filter((trade) => trade.status !== 'open')
 
   return (
     <section className="account-panel">
       <div className="tabs">
         <button
           type="button"
-          className={tab === 'positions' ? 'active' : ''}
-          onClick={() => setTab('positions')}
-        >
-          Posições ({positions.filter((p) => Number(p.quantity) > 0).length})
-        </button>
-        <button
-          type="button"
           className={tab === 'open' ? 'active' : ''}
           onClick={() => setTab('open')}
         >
-          Ordens abertas ({openOrders.length})
+          Operações abertas ({open.length})
         </button>
         <button
           type="button"
@@ -51,130 +56,107 @@ export function AccountPanel({ instruments }: { instruments: InstrumentDto[] }) 
       </div>
 
       <div className="table-scroll">
-        {tab === 'positions' && (
-          <table>
-            <thead>
-              <tr>
-                <th>Ativo</th>
-                <th>Qtd.</th>
-                <th>Preço médio</th>
-                <th>Último</th>
-                <th>Resultado aberto</th>
-                <th>Realizado</th>
-              </tr>
-            </thead>
-            <tbody>
-              {positions.map((position) => (
-                <PositionRow
-                  key={position.symbol}
-                  position={position}
-                  decimals={decimalsOf(position.symbol)}
-                />
-              ))}
-            </tbody>
-          </table>
-        )}
-        {tab !== 'positions' && (
-          <OrdersTable
-            orders={tab === 'open' ? openOrders : history}
-            decimalsOf={decimalsOf}
-            cancellable={tab === 'open'}
-          />
-        )}
+        {tab === 'open' &&
+          (open.length === 0 ? (
+            <p className="muted pad">Nenhuma operação aberta.</p>
+          ) : (
+            <table>
+              <thead>
+                <tr>
+                  <th>Ativo</th>
+                  <th>Direção</th>
+                  <th>Valor</th>
+                  <th>Entrada</th>
+                  <th>Atual</th>
+                  <th>Fecha em</th>
+                  <th>Se fechar agora</th>
+                </tr>
+              </thead>
+              <tbody>
+                {open.map((trade) => (
+                  <OpenTradeRow key={trade.id} trade={trade} currency={currencyOf(trade.symbol)} />
+                ))}
+              </tbody>
+            </table>
+          ))}
+
+        {tab === 'history' &&
+          (history.length === 0 ? (
+            <p className="muted pad">Nenhuma operação fechada ainda.</p>
+          ) : (
+            <table>
+              <thead>
+                <tr>
+                  <th>Horário</th>
+                  <th>Ativo</th>
+                  <th>Direção</th>
+                  <th>Valor</th>
+                  <th>Entrada</th>
+                  <th>Saída</th>
+                  <th>Resultado</th>
+                  <th>Lucro</th>
+                </tr>
+              </thead>
+              <tbody>
+                {history.map((trade) => (
+                  <HistoryRow key={trade.id} trade={trade} currency={currencyOf(trade.symbol)} />
+                ))}
+              </tbody>
+            </table>
+          ))}
       </div>
     </section>
   )
 }
 
-function PositionRow({ position, decimals }: { position: PositionDto; decimals: number }) {
-  const live = useLivePrice(position.symbol)
-  const quantity = Number(position.quantity)
-  const unrealized =
-    live && quantity > 0 ? (live.price - Number(position.averagePrice)) * quantity : null
-  const realized = Number(position.realizedPnl)
+function OpenTradeRow({ trade, currency }: { trade: TradeDto; currency: Currency }) {
+  const live = useLivePrice(trade.symbol)
+  const now = useNow(500)
+  const stake = Number(trade.stake)
+  const situation = live
+    ? previewOutcome(trade.direction, Number(trade.entryPrice), live.price)
+    : null
+  const returnNow =
+    situation === 'won' ? stake * (1 + Number(trade.payoutRate)) : situation === 'draw' ? stake : 0
 
   return (
     <tr>
-      <td>{position.symbol}</td>
-      <td>{formatQuantity(position.quantity, decimals)}</td>
-      <td>{quantity > 0 ? formatPrice(position.averagePrice, position.currency) : '—'}</td>
-      <td>{live ? formatPrice(live.price, position.currency) : '—'}</td>
-      <td className={pnlClass(unrealized)}>
-        {unrealized === null ? '—' : formatMoney(unrealized, position.currency)}
+      <td>{trade.symbol}</td>
+      <td className={trade.direction === 'buy' ? 'up' : 'down'}>
+        {DIRECTION_LABEL[trade.direction]}
       </td>
-      <td className={pnlClass(realized)}>{formatMoney(realized, position.currency)}</td>
+      <td>{money(trade.stake)}</td>
+      <td>{formatPrice(trade.entryPrice, currency)}</td>
+      <td>{live ? formatPrice(live.price, currency) : '—'}</td>
+      <td>{formatCountdown(Date.parse(trade.expiresAt) - now)}</td>
+      <td className={situation === 'won' ? 'up' : situation === 'lost' ? 'down' : ''}>
+        {situation === null
+          ? '—'
+          : `${situation === 'won' ? 'Ganhando' : situation === 'lost' ? 'Perdendo' : 'Empate'} · ${money(returnNow)}`}
+      </td>
     </tr>
   )
 }
 
-function OrdersTable({
-  orders,
-  decimalsOf,
-  cancellable,
-}: {
-  orders: OrderDto[]
-  decimalsOf: (symbol: string) => number
-  cancellable: boolean
-}) {
-  const queryClient = useQueryClient()
-  const cancel = useMutation({
-    mutationFn: api.cancelOrder,
-    onSettled: () => {
-      void queryClient.invalidateQueries({ queryKey: queryKeys.orders })
-      void queryClient.invalidateQueries({ queryKey: queryKeys.portfolio })
-    },
-  })
-
-  if (orders.length === 0) return <p className="muted pad">Nada por aqui ainda.</p>
+function HistoryRow({ trade, currency }: { trade: TradeDto; currency: Currency }) {
+  const status = trade.status === 'open' ? null : trade.status
+  const profit = Number(trade.payout ?? 0) - Number(trade.stake)
 
   return (
-    <table>
-      <thead>
-        <tr>
-          <th>Data</th>
-          <th>Ativo</th>
-          <th>Lado</th>
-          <th>Tipo</th>
-          <th>Qtd.</th>
-          <th>Limite</th>
-          <th>Executado a</th>
-          <th>Taxa</th>
-          <th>Status</th>
-          {cancellable && <th />}
-        </tr>
-      </thead>
-      <tbody>
-        {orders.map((order) => (
-          <tr key={order.id}>
-            <td>{formatTime(order.filledAt ?? order.createdAt)}</td>
-            <td>{order.symbol}</td>
-            <td className={order.side === 'buy' ? 'up' : 'down'}>{SIDE_LABEL[order.side]}</td>
-            <td>{TYPE_LABEL[order.type]}</td>
-            <td>{formatQuantity(order.quantity, decimalsOf(order.symbol))}</td>
-            <td>{order.limitPrice ? formatPrice(order.limitPrice, order.currency) : '—'}</td>
-            <td>{order.fillPrice ? formatPrice(order.fillPrice, order.currency) : '—'}</td>
-            <td>{order.fee ? formatMoney(order.fee, order.currency) : '—'}</td>
-            <td>{STATUS_LABEL[order.status]}</td>
-            {cancellable && (
-              <td>
-                <button
-                  type="button"
-                  className="ghost small"
-                  disabled={cancel.isPending}
-                  onClick={() => cancel.mutate(order.id)}
-                >
-                  Cancelar
-                </button>
-              </td>
-            )}
-          </tr>
-        ))}
-      </tbody>
-    </table>
+    <tr>
+      <td>{formatTime(trade.openedAt)}</td>
+      <td>{trade.symbol}</td>
+      <td className={trade.direction === 'buy' ? 'up' : 'down'}>
+        {DIRECTION_LABEL[trade.direction]}
+      </td>
+      <td>{money(trade.stake)}</td>
+      <td>{formatPrice(trade.entryPrice, currency)}</td>
+      <td>{trade.exitPrice ? formatPrice(trade.exitPrice, currency) : '—'}</td>
+      <td>{status && <span className={`result-tag ${status}`}>{RESULT_LABEL[status]}</span>}</td>
+      <td className={profit > 0 ? 'up' : profit < 0 ? 'down' : ''}>
+        {profit > 0 ? '+' : ''}
+        {money(profit)}
+      </td>
+    </tr>
   )
-}
-
-function pnlClass(value: number | null): string {
-  if (value === null || value === 0) return ''
-  return value > 0 ? 'up' : 'down'
 }

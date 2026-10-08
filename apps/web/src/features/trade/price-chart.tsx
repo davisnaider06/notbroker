@@ -11,12 +11,13 @@ import {
   createChart,
   type IChartApi,
   type ISeriesApi,
+  LineStyle,
   type UTCTimestamp,
 } from 'lightweight-charts'
 import { useEffect, useRef, useState } from 'react'
 import { api, queryKeys } from '../../lib/api.ts'
 import { useMoneyFormatter } from '../../lib/display-currency.ts'
-import { formatCountdown, priceDecimals } from '../../lib/format.ts'
+import { formatCountdown, formatMoney, priceDecimals } from '../../lib/format.ts'
 import { marketStream, useLivePrice } from '../../lib/market-stream.ts'
 
 const INTERVAL_SECONDS: Record<CandleInterval, number> = {
@@ -188,6 +189,28 @@ export function PriceChart({ instrument }: { instrument: InstrumentDto }) {
       stopWatching()
     }
   }, [instrument.symbol, interval])
+
+  // Operações abertas neste ativo: linha tracejada no preço de entrada, na cor da direção.
+  const trades = useQuery({ queryKey: queryKeys.trades, queryFn: api.trades })
+  useEffect(() => {
+    const series = seriesRef.current
+    if (!series) return
+    const lines = (trades.data ?? [])
+      .filter((trade) => trade.status === 'open' && trade.symbol === instrument.symbol)
+      .map((trade) =>
+        series.createPriceLine({
+          price: Number(trade.entryPrice),
+          color: css(trade.direction === 'buy' ? '--up' : '--down'),
+          lineWidth: 1,
+          lineStyle: LineStyle.Dashed,
+          axisLabelVisible: false,
+          title: `${trade.direction === 'buy' ? '▲' : '▼'} ${formatMoney(trade.stake, 'BRL')}`,
+        }),
+      )
+    return () => {
+      for (const line of lines) series.removePriceLine(line)
+    }
+  }, [trades.data, instrument.symbol])
 
   // Contagem regressiva até o candle fechar, colada embaixo do rótulo de último preço no eixo.
   // Atualizada por frame e direto no DOM: acompanha a animação do preço sem re-render do React.

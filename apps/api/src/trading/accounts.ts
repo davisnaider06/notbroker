@@ -1,16 +1,13 @@
-import { CURRENCIES } from '@b-hook/contracts'
+import { ACCOUNT_CURRENCY, STARTING_BALANCE } from '@b-hook/contracts'
 import type { Executor } from '../db/client.ts'
 import { instruments, wallets } from '../db/schema/index.ts'
 import { CATALOG } from '../market-data/catalog.ts'
-import { STARTING_BALANCES } from './ledger.ts'
 
-/** Toda conta nova nasce com uma carteira por moeda e o saldo inicial de treino. */
+/** Toda conta nova nasce com uma carteira em reais e o saldo inicial de treino. */
 export async function openAccount(db: Executor, userId: string): Promise<void> {
   await db
     .insert(wallets)
-    .values(
-      CURRENCIES.map((currency) => ({ userId, currency, balance: STARTING_BALANCES[currency] })),
-    )
+    .values({ userId, currency: ACCOUNT_CURRENCY, balance: STARTING_BALANCE })
     .onConflictDoNothing()
 }
 

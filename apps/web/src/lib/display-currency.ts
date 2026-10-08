@@ -72,11 +72,5 @@ export function useMoneyFormatter() {
     [display, rates],
   )
 
-  const convert = useCallback(
-    (value: number, currency: Currency): number | null =>
-      display === 'ORIGINAL' || !rates ? null : convertCurrency(value, currency, display, rates),
-    [display, rates],
-  )
-
-  return { display, format, convert, ready: display === 'ORIGINAL' || rates !== undefined }
+  return { display, format }
 }

@@ -1,4 +1,4 @@
-import type { OrderDto, PositionDto, WalletDto } from '@b-hook/contracts'
+import type { AccountDto, TradeDto } from '@b-hook/contracts'
 import type { FastifyInstance } from 'fastify'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { buildApp } from './app.ts'
@@ -9,7 +9,7 @@ import { CATALOG } from './market-data/catalog.ts'
 import { MarketDataHub } from './market-data/hub.ts'
 import type { MarketDataProvider } from './market-data/provider.ts'
 import { syncCatalog } from './trading/accounts.ts'
-import { OrderService } from './trading/order-service.ts'
+import { BinaryService } from './trading/binary-service.ts'
 
 const ORIGIN = 'http://localhost:5173'
 
@@ -21,13 +21,19 @@ const silentProvider: MarketDataProvider = {
   stop: () => {},
 }
 
+/** Relógio do teste: começa 10 s depois da virada do minuto, longe do corte de 30 s. */
+let clock = Date.UTC(2026, 9, 8, 13, 0, 10)
 let app: FastifyInstance
 let hub: MarketDataHub
+let binaryService: BinaryService
 let database: DatabaseHandle
 let cookie: string
 
-const price = (symbol: string, value: string) =>
-  hub.publish({ symbol, price: value, time: Date.now() })
+const advance = (ms: number) => {
+  clock += ms
+}
+const price = (symbol: string, value: string, time = clock) =>
+  hub.publish({ symbol, price: value, time })
 
 async function call<T>(method: 'GET' | 'POST', url: string, body?: object) {
   const response = await app.inject({
@@ -39,23 +45,23 @@ async function call<T>(method: 'GET' | 'POST', url: string, body?: object) {
   return { status: response.statusCode, body: response.json() as T }
 }
 
-async function portfolio() {
-  const { body } = await call<{ wallets: WalletDto[]; positions: PositionDto[] }>(
-    'GET',
-    '/api/portfolio',
-  )
-  const wallet = (currency: string) => body.wallets.find((w) => w.currency === currency)
-  const position = (symbol: string) => body.positions.find((p) => p.symbol === symbol)
-  return { wallet, position }
+async function balance(): Promise<number> {
+  const { body } = await call<AccountDto>('GET', '/api/account')
+  return Number(body.balance)
 }
 
-async function waitForStatus(orderId: string, status: OrderDto['status']) {
-  for (let attempt = 0; attempt < 50; attempt++) {
-    const { body } = await call<OrderDto[]>('GET', '/api/orders')
-    if (body.find((order) => order.id === orderId)?.status === status) return
-    await new Promise((resolve) => setTimeout(resolve, 20))
-  }
-  throw new Error(`ordem ${orderId} não chegou em ${status}`)
+async function openTrade(symbol: string, direction: 'buy' | 'sell', stake = '100') {
+  return call<TradeDto>('POST', '/api/trades', { symbol, direction, stake, expiration: '1m' })
+}
+
+/** Leva o relógio até a expiração da operação e liquida. */
+async function expire(trade: TradeDto): Promise<TradeDto> {
+  clock = Date.parse(trade.expiresAt) + 1
+  await binaryService.settleDue()
+  const { body } = await call<TradeDto[]>('GET', '/api/trades')
+  const settled = body.find((item) => item.id === trade.id)
+  if (!settled) throw new Error(`operação ${trade.id} sumiu`)
+  return settled
 }
 
 beforeAll(async () => {
@@ -69,13 +75,16 @@ beforeAll(async () => {
   hub = new MarketDataHub({ CRYPTO: silentProvider, US: silentProvider, B3: silentProvider })
   hub.start(CATALOG)
   const auth = createAuth(database.db, env)
-  const orderService = new OrderService(database.db, hub, console)
-  await orderService.start()
+  binaryService = new BinaryService(database.db, hub, console, {
+    now: () => clock,
+    autoSettle: false,
+  })
+  await binaryService.start()
   /** Câmbio fixo: o teste não sai para a rede. */
   const fx = {
     rates: async () => ({ perUsd: { USD: 1, EUR: 0.9, GBP: 0.8, BRL: 5 }, updatedAt: 0 }),
   }
-  app = await buildApp({ auth, hub, fx, orderService })
+  app = await buildApp({ auth, hub, fx, binaryService })
 
   const signUp = await app.inject({
     method: 'POST',
@@ -92,114 +101,97 @@ afterAll(async () => {
   await database.close()
 })
 
-describe('API de trading', () => {
+describe('casa de opções binárias', () => {
   it('bloqueia rotas privadas sem sessão', async () => {
-    const response = await app.inject({ method: 'GET', url: '/api/portfolio' })
+    const response = await app.inject({ method: 'GET', url: '/api/account' })
     expect(response.statusCode).toBe(401)
   })
 
-  it('abre a conta com saldo inicial em cada moeda', async () => {
-    const { wallet } = await portfolio()
-    expect(Number(wallet('USDT')?.balance)).toBe(10_000)
-    expect(Number(wallet('USD')?.balance)).toBe(10_000)
-    expect(Number(wallet('BRL')?.balance)).toBe(50_000)
+  it('abre a conta com R$ 10.000', async () => {
+    const { body } = await call<AccountDto>('GET', '/api/account')
+    expect(body.currency).toBe('BRL')
+    expect(Number(body.balance)).toBe(10_000)
   })
 
-  it('recusa ordem a mercado sem cotação', async () => {
-    const { status } = await call('POST', '/api/orders', {
-      symbol: 'ETHUSDT',
-      side: 'buy',
-      type: 'market',
-      quantity: '1',
-    })
+  it('recusa operação sem cotação', async () => {
+    expect((await openTrade('ETHUSDT', 'buy')).status).toBe(409)
+  })
+
+  it('recusa operação com mercado fechado (cotação velha)', async () => {
+    price('PETR4', '38.50', clock - 60 * 60_000)
+    const { status, body } = await openTrade('PETR4', 'buy')
     expect(status).toBe(409)
+    expect(body).toMatchObject({ error: { code: 'MARKET_CLOSED' } })
   })
 
-  it('executa compra a mercado no último preço, cobrando taxa', async () => {
+  it('compra que fecha na alta: win devolve valor + 70%', async () => {
     price('BTCUSDT', '50000')
-    const { status, body } = await call<OrderDto>('POST', '/api/orders', {
-      symbol: 'BTCUSDT',
-      side: 'buy',
-      type: 'market',
-      quantity: '0.1',
-    })
+    const { status, body: trade } = await openTrade('BTCUSDT', 'buy')
     expect(status).toBe(201)
-    expect(body.status).toBe('filled')
+    expect(trade.status).toBe('open')
+    // O valor sai do saldo na hora, e o saldo não se mexe com o preço.
+    expect(await balance()).toBe(9_900)
+    price('BTCUSDT', '50100')
+    expect(await balance()).toBe(9_900)
 
-    const { wallet, position } = await portfolio()
-    // 0.1 x 50000 = 5000 + 0,1% de taxa = 5005
-    expect(Number(wallet('USDT')?.balance)).toBe(4995)
-    expect(Number(position('BTCUSDT')?.quantity)).toBe(0.1)
-    expect(Number(position('BTCUSDT')?.averagePrice)).toBe(50000)
+    const settled = await expire(trade)
+    expect(settled.status).toBe('won')
+    expect(Number(settled.payout)).toBe(170)
+    expect(await balance()).toBe(10_070)
   })
 
-  it('executa venda limitada quando o preço chega no alvo', async () => {
-    const { body: order } = await call<OrderDto>('POST', '/api/orders', {
-      symbol: 'BTCUSDT',
-      side: 'sell',
-      type: 'limit',
-      quantity: '0.1',
-      limitPrice: '51000',
-    })
-    expect(order.status).toBe('open')
-    expect(Number((await portfolio()).position('BTCUSDT')?.lockedQuantity)).toBe(0.1)
-
-    price('BTCUSDT', '50500')
-    price('BTCUSDT', '51200')
-    await waitForStatus(order.id, 'filled')
-
-    const { wallet, position } = await portfolio()
-    // Executa no preço do tick (51200): 5120 - 5,12 de taxa
-    expect(Number(wallet('USDT')?.balance)).toBe(4995 + 5120 - 5.12)
-    expect(Number(position('BTCUSDT')?.quantity)).toBe(0)
-    // (51200 - 50000) x 0.1 - 5 (taxa compra) - 5,12 (taxa venda)
-    expect(Number(position('BTCUSDT')?.realizedPnl)).toBeCloseTo(109.88, 8)
+  it('compra que fecha na baixa: loss perde o valor', async () => {
+    advance(1000)
+    price('BTCUSDT', '50000')
+    const { body: trade } = await openTrade('BTCUSDT', 'buy')
+    price('BTCUSDT', '49900')
+    const settled = await expire(trade)
+    expect(settled.status).toBe('lost')
+    expect(Number(settled.payout)).toBe(0)
+    expect(await balance()).toBe(9_970)
   })
 
-  it('reserva caixa na compra limitada e devolve no cancelamento', async () => {
-    price('PETR4', '38.50')
-    const { body: order } = await call<OrderDto>('POST', '/api/orders', {
-      symbol: 'PETR4',
-      side: 'buy',
-      type: 'limit',
-      quantity: '100',
-      limitPrice: '35',
-    })
-    expect(order.status).toBe('open')
-    const reserved = (await portfolio()).wallet('BRL')
-    expect(Number(reserved?.locked)).toBeCloseTo(3500 * 1.0003, 8)
+  it('venda que fecha na alta é loss; na baixa é win', async () => {
+    advance(1000)
+    price('ETHUSDT', '3000')
+    const { body: loser } = await openTrade('ETHUSDT', 'sell')
+    price('ETHUSDT', '3010')
+    expect((await expire(loser)).status).toBe('lost')
+    expect(await balance()).toBe(9_870)
 
-    const { status } = await call<OrderDto>('POST', `/api/orders/${order.id}/cancel`)
-    expect(status).toBe(200)
-    const released = (await portfolio()).wallet('BRL')
-    expect(Number(released?.balance)).toBe(50_000)
-    expect(Number(released?.locked)).toBe(0)
+    advance(1000)
+    const { body: winner } = await openTrade('ETHUSDT', 'sell')
+    price('ETHUSDT', '2990')
+    expect((await expire(winner)).status).toBe('won')
+    expect(await balance()).toBe(9_940)
   })
 
-  it('valida saldo, posição e precisão da quantidade', async () => {
-    price('AAPL', '200')
-    const tooBig = await call('POST', '/api/orders', {
-      symbol: 'AAPL',
-      side: 'buy',
-      type: 'market',
-      quantity: '1000',
-    })
-    expect(tooBig.status).toBe(422)
+  it('empate devolve o valor', async () => {
+    advance(1000)
+    price('SOLUSDT', '100')
+    const { body: trade } = await openTrade('SOLUSDT', 'buy')
+    expect((await expire(trade)).status).toBe('draw')
+    expect(await balance()).toBe(9_940)
+  })
 
-    const fractional = await call('POST', '/api/orders', {
-      symbol: 'AAPL',
-      side: 'buy',
-      type: 'market',
-      quantity: '1.5',
-    })
-    expect(fractional.status).toBe(422)
+  it('fecha no preço da expiração, ignorando tick que chegou depois', async () => {
+    advance(1000)
+    price('XRPUSDT', '1.00')
+    const { body: trade } = await openTrade('XRPUSDT', 'buy')
+    const expiresAt = Date.parse(trade.expiresAt)
+    price('XRPUSDT', '1.10', expiresAt - 500)
+    price('XRPUSDT', '0.90', expiresAt + 100)
+    const settled = await expire(trade)
+    expect(settled.exitPrice).toBe('1.1000000000')
+    expect(settled.status).toBe('won')
+  })
 
-    const naked = await call('POST', '/api/orders', {
-      symbol: 'AAPL',
-      side: 'sell',
-      type: 'market',
-      quantity: '1',
-    })
-    expect(naked.status).toBe(422)
+  it('valida saldo e valor', async () => {
+    advance(1000)
+    price('BTCUSDT', '50000')
+    expect((await openTrade('BTCUSDT', 'buy', '999999')).status).toBe(422)
+    // Formato inválido é erro de validação (400); falta de saldo é regra de negócio (422).
+    expect((await openTrade('BTCUSDT', 'buy', '10.555')).status).toBe(400)
+    expect((await openTrade('BTCUSDT', 'buy', '0.50')).status).toBe(400)
   })
 })

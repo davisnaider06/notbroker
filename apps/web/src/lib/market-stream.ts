@@ -1,4 +1,4 @@
-import type { ClientMessage, OrderDto, ServerMessage } from '@b-hook/contracts'
+import type { ClientMessage, ServerMessage, TradeDto } from '@b-hook/contracts'
 import { useCallback, useEffect, useMemo, useSyncExternalStore } from 'react'
 
 export interface LivePrice {
@@ -9,7 +9,7 @@ export interface LivePrice {
 }
 
 type Listener = () => void
-type OrderListener = (order: OrderDto) => void
+type TradeListener = (trade: TradeDto) => void
 
 /**
  * Uma conexão WebSocket por aba. Componentes assinam símbolos com contagem de referência;
@@ -22,7 +22,7 @@ class MarketStream {
   readonly #refCounts = new Map<string, number>()
   readonly #prices = new Map<string, LivePrice>()
   readonly #priceListeners = new Map<string, Set<Listener>>()
-  readonly #orderListeners = new Set<OrderListener>()
+  readonly #tradeListeners = new Set<TradeListener>()
 
   connect(): void {
     if (this.#active) return
@@ -66,9 +66,10 @@ class MarketStream {
     return this.#prices.get(symbol)
   }
 
-  onOrder(listener: OrderListener): () => void {
-    this.#orderListeners.add(listener)
-    return () => this.#orderListeners.delete(listener)
+  /** Abertura e fechamento das operações do próprio usuário. */
+  onTrade(listener: TradeListener): () => void {
+    this.#tradeListeners.add(listener)
+    return () => this.#tradeListeners.delete(listener)
   }
 
   #open(): void {
@@ -97,8 +98,8 @@ class MarketStream {
         previous === undefined || previous === price ? 'flat' : price > previous ? 'up' : 'down'
       this.#prices.set(message.symbol, { price, time: message.time, direction })
       for (const listener of this.#priceListeners.get(message.symbol) ?? []) listener()
-    } else if (message.type === 'order') {
-      for (const listener of this.#orderListeners) listener(message.order)
+    } else if (message.type === 'trade') {
+      for (const listener of this.#tradeListeners) listener(message.trade)
     }
   }
 

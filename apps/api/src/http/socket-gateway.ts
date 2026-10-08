@@ -6,7 +6,7 @@ import { currentUser, requireUser } from '../auth/session.ts'
 import { findInstrument } from '../market-data/catalog.ts'
 import type { MarketDataHub } from '../market-data/hub.ts'
 import type { Tick } from '../market-data/provider.ts'
-import type { OrderService } from '../trading/order-service.ts'
+import type { BinaryService } from '../trading/binary-service.ts'
 
 /** BTC chega a dezenas de negócios por segundo; o navegador só precisa de ~4 atualizações/s. */
 const FLUSH_INTERVAL_MS = 250
@@ -18,13 +18,13 @@ interface Client {
 
 /**
  * Um WebSocket por aba em /ws. O cliente assina símbolos e recebe ticks agregados; atualizações
- * das próprias ordens chegam sem assinatura. A sessão é validada antes do upgrade.
+ * das próprias operações chegam sem assinatura. A sessão é validada antes do upgrade.
  */
 export function registerSocketGateway(
   app: FastifyInstance,
   auth: Auth,
   hub: MarketDataHub,
-  orderService: OrderService,
+  binaryService: BinaryService,
 ): void {
   const clients = new Map<WebSocket, Client>()
   const pending = new Map<string, Tick>()
@@ -45,16 +45,16 @@ export function registerSocketGateway(
     }
   }, FLUSH_INTERVAL_MS)
 
-  const stopOrders = orderService.onOrderUpdate((userId, order) => {
+  const stopTrades = binaryService.onTradeUpdate((userId, trade) => {
     for (const [socket, client] of clients) {
-      if (client.userId === userId) send(socket, { type: 'order', order })
+      if (client.userId === userId) send(socket, { type: 'trade', trade })
     }
   })
 
   app.addHook('onClose', async () => {
     clearInterval(flushTimer)
     stopTicks()
-    stopOrders()
+    stopTrades()
   })
 
   app.get('/ws', { websocket: true, preValidation: requireUser(auth) }, (socket, request) => {

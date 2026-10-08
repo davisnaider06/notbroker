@@ -8,13 +8,13 @@ import { registerTradingRoutes } from './http/routes/trading.ts'
 import { registerSocketGateway } from './http/socket-gateway.ts'
 import type { FxSource } from './market-data/fx.ts'
 import type { MarketDataHub } from './market-data/hub.ts'
-import type { OrderService } from './trading/order-service.ts'
+import type { BinaryService } from './trading/binary-service.ts'
 
 export interface AppDependencies {
   auth: Auth
   hub: MarketDataHub
   fx: FxSource
-  orderService: OrderService
+  binaryService: BinaryService
 }
 
 /** Monta o servidor HTTP sem abrir porta: o mesmo app serve o main.ts e os testes (inject). */
@@ -32,8 +32,8 @@ export async function buildApp(
   app.get('/api/health', async () => ({ status: 'ok' }))
   registerAuthRoutes(app, deps.auth)
   registerMarketRoutes(app, deps.hub, deps.fx)
-  registerTradingRoutes(app, deps.auth, deps.orderService)
-  registerSocketGateway(app, deps.auth, deps.hub, deps.orderService)
+  registerTradingRoutes(app, deps.auth, deps.binaryService)
+  registerSocketGateway(app, deps.auth, deps.hub, deps.binaryService)
 
   return app
 }
