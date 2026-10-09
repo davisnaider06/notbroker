@@ -1,4 +1,4 @@
-import { convertCurrency, type FxRatesDto } from '@b-hook/contracts'
+import { convertCurrency, type FxRatesDto } from '@notbroker/contracts'
 import { describe, expect, it } from 'vitest'
 
 const rates: FxRatesDto = { perUsd: { USD: 1, EUR: 0.9, GBP: 0.8, BRL: 5 }, updatedAt: 0 }

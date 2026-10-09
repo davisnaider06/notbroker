@@ -27,7 +27,7 @@ export function AuthScreen() {
   return (
     <main className="auth">
       <form className="auth-card" onSubmit={handleSubmit}>
-        <h1 className="brand">B-Hook</h1>
+        <h1 className="brand">NotBroker</h1>
         <p className="muted">
           Casa de opções binárias simulada. Dinheiro de mentira, cotação de verdade.
         </p>

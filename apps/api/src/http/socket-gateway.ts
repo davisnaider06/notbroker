@@ -1,4 +1,4 @@
-import { clientMessageSchema, type ServerMessage } from '@b-hook/contracts'
+import { clientMessageSchema, type ServerMessage } from '@notbroker/contracts'
 import type { FastifyInstance } from 'fastify'
 import type { WebSocket } from 'ws'
 import type { Auth } from '../auth/auth.ts'

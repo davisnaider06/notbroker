@@ -1,4 +1,4 @@
-import type { FxRatesDto } from '@b-hook/contracts'
+import type { FxRatesDto } from '@notbroker/contracts'
 import type { Logger } from './provider.ts'
 import { fetchYahooPrice } from './providers/yahoo.ts'
 

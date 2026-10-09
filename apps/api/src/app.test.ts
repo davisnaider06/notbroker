@@ -1,4 +1,4 @@
-import type { AccountDto, TradeDto } from '@b-hook/contracts'
+import type { AccountDto, TradeDto } from '@notbroker/contracts'
 import type { FastifyInstance } from 'fastify'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { buildApp } from './app.ts'

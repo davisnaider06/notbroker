@@ -1,4 +1,4 @@
-import { ACCOUNT_CURRENCY, STARTING_BALANCE } from '@b-hook/contracts'
+import { ACCOUNT_CURRENCY, STARTING_BALANCE } from '@notbroker/contracts'
 import type { Executor } from '../db/client.ts'
 import { instruments, wallets } from '../db/schema/index.ts'
 import { CATALOG } from '../market-data/catalog.ts'

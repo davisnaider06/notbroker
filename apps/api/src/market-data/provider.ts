@@ -1,4 +1,4 @@
-import type { CandleDto, CandleInterval } from '@b-hook/contracts'
+import type { CandleDto, CandleInterval } from '@notbroker/contracts'
 import type { FastifyBaseLogger } from 'fastify'
 import type { Instrument } from './catalog.ts'
 

@@ -7,7 +7,7 @@ import {
   type TradeDirection,
   type TradeDto,
   type TradeStatus,
-} from '@b-hook/contracts'
+} from '@notbroker/contracts'
 import { Decimal } from 'decimal.js'
 import { and, desc, eq } from 'drizzle-orm'
 import type { Database } from '../db/client.ts'

@@ -6,7 +6,7 @@ import type {
   InstrumentDto,
   OpenTradeInput,
   TradeDto,
-} from '@b-hook/contracts'
+} from '@notbroker/contracts'
 
 export class ApiError extends Error {
   readonly status: number

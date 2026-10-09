@@ -1,5 +1,5 @@
 {
-  "name": "@b-hook/api",
+  "name": "@notbroker/api",
   "private": true,
   "type": "module",
   "scripts": {
@@ -10,7 +10,7 @@
     "db:generate": "drizzle-kit generate"
   },
   "dependencies": {
-    "@b-hook/contracts": "*",
+    "@notbroker/contracts": "*",
     "@electric-sql/pglite": "^0.5.8",
     "@fastify/websocket": "^11.3.3",
     "better-auth": "^1.7.7",

@@ -6,7 +6,7 @@ import {
   type TradeDirection,
   type TradeDto,
   type TradeStatus,
-} from '@b-hook/contracts'
+} from '@notbroker/contracts'
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { api, queryKeys } from '../../lib/api.ts'

@@ -1,4 +1,4 @@
-import type { ClientMessage, ServerMessage, TradeDto } from '@b-hook/contracts'
+import type { ClientMessage, ServerMessage, TradeDto } from '@notbroker/contracts'
 import { useCallback, useEffect, useMemo, useSyncExternalStore } from 'react'
 
 export interface LivePrice {

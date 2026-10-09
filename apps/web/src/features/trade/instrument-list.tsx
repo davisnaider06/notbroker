@@ -3,7 +3,7 @@ import {
   MARKET_DATA_DELAY_MINUTES,
   MARKETS,
   type Market,
-} from '@b-hook/contracts'
+} from '@notbroker/contracts'
 import {
   type DisplayChoice,
   setDisplayCurrency,

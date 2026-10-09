@@ -1,4 +1,4 @@
-import { ACCOUNT_CURRENCY } from '@b-hook/contracts'
+import { ACCOUNT_CURRENCY } from '@notbroker/contracts'
 import { useQuery } from '@tanstack/react-query'
 import { api, queryKeys } from '../../lib/api.ts'
 import { formatMoney } from '../../lib/format.ts'

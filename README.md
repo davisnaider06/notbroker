@@ -1,4 +1,4 @@
-# B-Hook
+# NotBroker
 
 Casa de opções binárias simulada para treinar com cotação real de cripto (Binance), ações dos EUA
 (Alpaca/Yahoo) e B3 (Yahoo). Dinheiro fictício, custo zero.
@@ -35,7 +35,7 @@ do Yahoo.
 | `npm run dev` | API (3333) + web (5173) com reload |
 | `npm run verify` | Lint, typecheck e testes, a mesma checagem para rodar antes de subir |
 | `npm run fix` | Formata e corrige o que o Biome souber |
-| `npm run db:generate -w @b-hook/api` | Gera migration depois de mudar o schema. Ela é aplicada sozinha no próximo boot. |
+| `npm run db:generate -w @notbroker/api` | Gera migration depois de mudar o schema. Ela é aplicada sozinha no próximo boot. |
 
 ## API
 
@@ -50,4 +50,3 @@ do Yahoo.
 | `WS` | `/ws`: envie `{ type: "subscribe", symbols: [...] }`, recebe `tick` e `trade` | sim |
 
 As decisões técnicas e o porquê de cada uma estão em [ARCHITECTURE.md](./ARCHITECTURE.md).
-# notbroker

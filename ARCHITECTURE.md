@@ -1,6 +1,6 @@
 # Arquitetura
 
-B-Hook é uma casa de opções binárias simulada: cotação real, dinheiro fictício. Multiusuário
+NotBroker é uma casa de opções binárias simulada: cotação real, dinheiro fictício. Multiusuário
 desde o início, custo zero de infraestrutura e de dados.
 
 ## Visão geral

@@ -5,7 +5,7 @@ import { authClient } from './lib/auth-client.ts'
 export function App() {
   const { data: session, isPending } = authClient.useSession()
 
-  if (isPending) return <div className="splash">B-Hook</div>
+  if (isPending) return <div className="splash">NotBroker</div>
   if (!session) return <AuthScreen />
   return <TradeScreen user={session.user} />
 }

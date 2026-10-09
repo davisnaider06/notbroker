@@ -1,4 +1,4 @@
-import type { Currency, DisplayCurrency } from '@b-hook/contracts'
+import type { Currency, DisplayCurrency } from '@notbroker/contracts'
 
 /** Moeda de liquidação (USDT, USD, BRL) ou de exibição (USD, EUR, GBP, BRL). */
 export type Money = Currency | DisplayCurrency

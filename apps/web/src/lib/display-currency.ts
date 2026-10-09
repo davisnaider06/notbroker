@@ -3,7 +3,7 @@ import {
   convertCurrency,
   DISPLAY_CURRENCIES,
   type DisplayCurrency,
-} from '@b-hook/contracts'
+} from '@notbroker/contracts'
 import { useQuery } from '@tanstack/react-query'
 import { useCallback, useSyncExternalStore } from 'react'
 import { api, queryKeys } from './api.ts'
@@ -12,7 +12,7 @@ import { formatPrice } from './format.ts'
 /** "ORIGINAL" mostra cada valor na moeda em que o ativo é negociado. */
 export type DisplayChoice = 'ORIGINAL' | DisplayCurrency
 
-const STORAGE_KEY = 'b-hook:display-currency'
+const STORAGE_KEY = 'notbroker:display-currency'
 const listeners = new Set<() => void>()
 
 function readStored(): DisplayChoice {

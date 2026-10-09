@@ -1,4 +1,4 @@
-import { CURRENCIES, MARKETS, TRADE_DIRECTIONS, TRADE_STATUSES } from '@b-hook/contracts'
+import { CURRENCIES, MARKETS, TRADE_DIRECTIONS, TRADE_STATUSES } from '@notbroker/contracts'
 import {
   index,
   integer,

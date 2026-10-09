@@ -1,4 +1,4 @@
-import { openTradeSchema } from '@b-hook/contracts'
+import { openTradeSchema } from '@notbroker/contracts'
 import type { FastifyInstance } from 'fastify'
 import type { Auth } from '../../auth/auth.ts'
 import { currentUser, requireUser } from '../../auth/session.ts'

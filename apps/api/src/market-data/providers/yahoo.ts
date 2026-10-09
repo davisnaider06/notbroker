@@ -1,4 +1,4 @@
-import type { CandleDto, CandleInterval } from '@b-hook/contracts'
+import type { CandleDto, CandleInterval } from '@notbroker/contracts'
 import { z } from 'zod'
 import type { Instrument } from '../catalog.ts'
 import { fetchJson, type Logger, type MarketDataProvider, type TickListener } from '../provider.ts'
@@ -13,7 +13,7 @@ const CHART_URL = 'https://query1.finance.yahoo.com/v8/finance/chart'
  * fetch seguinte reaproveita o socket morto e fica pendurado até o timeout (~1 em 4 requisições).
  * Conexão nova custa ~1 s de TLS, irrelevante para polling.
  */
-const HEADERS = { 'User-Agent': 'Mozilla/5.0 (B-Hook paper trading)', Connection: 'close' }
+const HEADERS = { 'User-Agent': 'Mozilla/5.0 (NotBroker paper trading)', Connection: 'close' }
 
 const RANGES: Record<CandleInterval, { interval: string; range: string }> = {
   '1m': { interval: '1m', range: '5d' },

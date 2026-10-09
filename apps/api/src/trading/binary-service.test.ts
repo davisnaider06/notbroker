@@ -1,4 +1,4 @@
-import { expiryFor } from '@b-hook/contracts'
+import { expiryFor } from '@notbroker/contracts'
 import { Decimal } from 'decimal.js'
 import { describe, expect, it } from 'vitest'
 import { outcome, payoutFor } from './binary-service.ts'

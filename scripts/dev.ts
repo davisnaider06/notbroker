@@ -5,8 +5,8 @@
 import { type ChildProcess, spawn, spawnSync } from 'node:child_process'
 
 const tasks = [
-  { name: 'api', color: 36, workspace: '@b-hook/api' },
-  { name: 'web', color: 35, workspace: '@b-hook/web' },
+  { name: 'api', color: 36, workspace: '@notbroker/api' },
+  { name: 'web', color: 35, workspace: '@notbroker/web' },
 ]
 
 const children: ChildProcess[] = []

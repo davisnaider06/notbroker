@@ -9,7 +9,7 @@ import {
   PAYOUT_RATE,
   type TradeDirection,
   type TradeDto,
-} from '@b-hook/contracts'
+} from '@notbroker/contracts'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { api, queryKeys } from '../../lib/api.ts'

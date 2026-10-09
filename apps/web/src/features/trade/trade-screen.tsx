@@ -34,7 +34,7 @@ export function TradeScreen({ user }: { user: { name: string; email: string } })
   return (
     <div className="terminal">
       <header className="topbar">
-        <span className="brand">B-Hook</span>
+        <span className="brand">NotBroker</span>
         <WalletBar />
         <div className="user">
           <span className="muted">{user.email}</span>

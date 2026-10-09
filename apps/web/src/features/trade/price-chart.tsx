@@ -4,7 +4,7 @@ import {
   type CandleInterval,
   type InstrumentDto,
   MARKET_DATA_DELAY_MINUTES,
-} from '@b-hook/contracts'
+} from '@notbroker/contracts'
 import { useQuery } from '@tanstack/react-query'
 import {
   CandlestickSeries,

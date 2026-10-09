@@ -1,4 +1,4 @@
-import type { CandleDto, CandleInterval, Market } from '@b-hook/contracts'
+import type { CandleDto, CandleInterval, Market } from '@notbroker/contracts'
 import { findInstrument, type Instrument } from './catalog.ts'
 import type { MarketDataProvider, Tick, TickListener } from './provider.ts'
 

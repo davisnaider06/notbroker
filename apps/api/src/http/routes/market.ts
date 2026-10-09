@@ -1,4 +1,4 @@
-import { candlesQuerySchema, type FxRatesDto, type InstrumentDto } from '@b-hook/contracts'
+import { candlesQuerySchema, type FxRatesDto, type InstrumentDto } from '@notbroker/contracts'
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { CATALOG, findInstrument } from '../../market-data/catalog.ts'

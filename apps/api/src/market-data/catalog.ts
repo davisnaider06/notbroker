@@ -1,4 +1,4 @@
-import { type Currency, MARKET_CURRENCY, type Market } from '@b-hook/contracts'
+import { type Currency, MARKET_CURRENCY, type Market } from '@notbroker/contracts'
 
 export interface Instrument {
   symbol: string
