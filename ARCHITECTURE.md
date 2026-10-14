@@ -62,8 +62,12 @@ scripts/dev.ts       Sobe API e web juntos
 |---|---|---|---|
 | Cripto | Binance `data-stream.binance.vision` | WebSocket real-time | Sem chave. Endpoints só de market data. |
 | EUA | Alpaca (feed IEX) | WebSocket real-time | Precisa de conta paper grátis (sem depósito). Até 30 símbolos, 1 conexão por chave. |
-| EUA (fallback) | Yahoo Finance | Polling (15 s) | Usado quando não há chave da Alpaca. |
-| B3 | Yahoo Finance | Polling (15 s) | **Não oficial**, atraso de ~15 min. Fica isolado em `providers/yahoo.ts`. |
+| EUA (fallback) | Yahoo Finance | Polling (15 s) | Usado quando não há chave da Alpaca. Só gráfico. |
+| B3 | Yahoo Finance | Polling (15 s) | **Não oficial**, atraso de ~15 min. Só gráfico. Isolado em `providers/yahoo.ts`. |
+
+Cada provedor declara `realtime`. Binária só abre em mercado servido por provedor tempo real
+(Binance, Alpaca). Com cotação atrasada ou por polling, quem olha o preço de agora em outro site
+já sabe o resultado ao clicar: a operação inteira aconteceria num trecho de preço que já passou.
 
 Para a B3 não existe WebSocket real-time gratuito. O brapi.dev grátis só entrega candle diário,
 atualizado a cada 30 min, o que é pior que o Yahoo para treinar. Quando houver orçamento, basta
@@ -78,7 +82,11 @@ Ficam em `packages/contracts/src/trades.ts`, para a tela calcular com a mesma re
 - Win devolve valor + 70% (payout gravado por operação). Loss perde o valor. Empate devolve o valor.
 - Expiração no fechamento da vela do tempo escolhido (1m, 5m, 15m, 1h), alinhada ao relógio UTC.
   Com menos de 30 s para a vela fechar, a operação vai para a vela seguinte.
-- Sem cotação, ou cotação com mais de 20 min (mercado fechado), a entrada é recusada (409).
+- Mercado sem fonte tempo real não aceita operação (409 `MARKET_DELAYED`).
+- Entrada exige negócio recente: até 5 s em cripto, 15 s em ações (409 `MARKET_CLOSED`).
+- Saída: último negócio até a expiração. Se ele estiver mais longe que esse mesmo limite (feed
+  parado naquele instante), a operação é estornada em vez de fechar num preço velho.
+- No máximo 20 operações abertas por usuário (422) e 30 aberturas por minuto (429).
 - Valor mínimo R$ 1, no máximo 2 casas decimais.
 
 ## Limites conhecidos
@@ -86,6 +94,23 @@ Ficam em `packages/contracts/src/trades.ts`, para a tela calcular com a mesma re
 - O catálogo é fixo em código (`market-data/catalog.ts`) e acompanhado inteiro o tempo todo. Isso é
   ótimo para 15 ativos. Com centenas, o hub precisa assinar sob demanda.
 - "Mercado fechado" é inferido pela idade da cotação, não por calendário de pregão.
-- A B3 vem do Yahoo com ~15 min de atraso: a operação abre e fecha nesse preço atrasado.
+- A B3 vem do Yahoo com ~15 min de atraso: só gráfico, sem binária, até haver feed tempo real.
+- Rate limit em memória (`@fastify/rate-limit`): vale por processo, como a liquidação.
+- Cadastro não verifica e-mail: dá para criar várias contas e ter saldo fictício infinito. Só
+  importa se houver ranking.
+
+## Produção
+
+A API serve o build do front (`apps/web/dist`) na mesma origem de `/api` e `/ws`, como o proxy do
+Vite faz em dev: cookie de sessão e WebSocket funcionam sem CORS. Rotas fora de `/api` devolvem o
+`index.html`. Toda resposta sai com CSP, `nosniff`, `X-Frame-Options` e, sob HTTPS, HSTS.
+
+Variáveis obrigatórias em produção: `NODE_ENV=production`, `BETTER_AUTH_SECRET` (o valor do
+`.env.example` é recusado), `BETTER_AUTH_URL` com a URL pública, `DATABASE_URL` (Postgres).
+Atrás de proxy ou load balancer, `TRUST_PROXY=true` para o rate limit ver o IP real.
+
+O banco PGlite local tem trava por PID + batimento (`db/dir-lock.ts`): o dono atualiza o arquivo a
+cada 5 s, e uma trava com PID vivo mas sem batimento (PID reaproveitado após hibernar) é assumida
+depois de 10 s.
 - A liquidação roda em um processo só. Escalar horizontalmente exige mover as operações abertas
   e os ticks para um pub/sub (Redis, por exemplo).

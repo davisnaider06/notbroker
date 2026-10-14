@@ -16,6 +16,11 @@ export type Logger = Pick<FastifyBaseLogger, 'info' | 'warn' | 'error'>
 /** Contrato de toda fonte de preço. Trocar Yahoo por um feed pago da B3 é escrever outro desses. */
 export interface MarketDataProvider {
   readonly name: string
+  /**
+   * Empurra cada negócio na hora em que acontece (WebSocket). Polling ou fonte com atraso não é
+   * tempo real: serve para gráfico, nunca para aceitar operação.
+   */
+  readonly realtime: boolean
   start(instruments: readonly Instrument[], onTick: TickListener): void
   candles(instrument: Instrument, interval: CandleInterval): Promise<CandleDto[]>
   stop(): void

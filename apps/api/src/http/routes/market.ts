@@ -22,6 +22,7 @@ export function registerMarketRoutes(app: FastifyInstance, hub: MarketDataHub, f
         currency: instrument.currency,
         quantityDecimals: instrument.quantityDecimals,
         lastPrice: hub.lastPrice(instrument.symbol) ?? null,
+        tradable: hub.isRealtime(instrument.market),
       })),
   )
 

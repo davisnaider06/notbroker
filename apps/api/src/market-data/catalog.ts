@@ -26,7 +26,7 @@ const stock = (market: 'US' | 'B3', symbol: string, name: string): Instrument =>
 
 /**
  * Catálogo negociável. O servidor acompanha todos os ativos daqui o tempo inteiro, o que mantém
- * o matching de ordens limitadas funcionando mesmo sem ninguém olhando o gráfico.
+ * a liquidação das binárias funcionando mesmo sem ninguém olhando o gráfico.
  * Limite prático: a Alpaca grátis aceita 30 símbolos no WebSocket.
  */
 export const CATALOG: readonly Instrument[] = [

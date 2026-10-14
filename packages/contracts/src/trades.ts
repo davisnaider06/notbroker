@@ -9,6 +9,8 @@ export const STARTING_BALANCE = '10000'
 /** Win devolve o valor apostado + 70% dele. Loss perde o valor inteiro. */
 export const PAYOUT_RATE = '0.70'
 export const MIN_STAKE = 1
+/** Teto de operações abertas ao mesmo tempo por usuário. */
+export const MAX_OPEN_TRADES = 20
 /** Com menos que isso para a vela fechar, a operação vai para a vela seguinte. */
 export const ENTRY_CUTOFF_SECONDS = 30
 

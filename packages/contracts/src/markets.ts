@@ -39,6 +39,8 @@ export interface InstrumentDto {
   quantityDecimals: number
   /** Último preço conhecido pelo servidor, ou null se o feed ainda não respondeu. */
   lastPrice: string | null
+  /** Aceita binária. false quando a fonte não é tempo real (B3 pelo Yahoo): só gráfico. */
+  tradable: boolean
 }
 
 /** Candle com tempo em segundos UNIX, formato que o lightweight-charts consome direto. */

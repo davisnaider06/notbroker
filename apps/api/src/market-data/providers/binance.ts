@@ -44,6 +44,7 @@ export function parseBinanceKlines(payload: unknown): CandleDto[] {
 
 export class BinanceProvider implements MarketDataProvider {
   readonly name = 'binance'
+  readonly realtime = true
   readonly #logger: Logger
   #socket: ReconnectingSocket | undefined
 

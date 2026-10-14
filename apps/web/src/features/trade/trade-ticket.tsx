@@ -4,7 +4,6 @@ import {
   type Expiration,
   expiryFor,
   type InstrumentDto,
-  MARKET_DATA_DELAY_MINUTES,
   MIN_STAKE,
   PAYOUT_RATE,
   type TradeDirection,
@@ -128,10 +127,10 @@ export function TradeTicket({ instrument }: { instrument: InstrumentDto }) {
         <dd>{stake ? money(Number(stake) + profit) : '—'}</dd>
       </dl>
 
-      {MARKET_DATA_DELAY_MINUTES[instrument.market] > 0 && (
+      {!instrument.tradable && (
         <p className="delay-warning">
-          Cotação da {instrument.market} com {MARKET_DATA_DELAY_MINUTES[instrument.market]} min de
-          atraso: a operação abre e fecha nesse preço, não no da bolsa agora.
+          Binária indisponível em {instrument.symbol}: a cotação desse mercado não chega em tempo
+          real, e com preço atrasado o resultado já seria conhecido. Só o gráfico está liberado.
         </p>
       )}
 
@@ -139,7 +138,7 @@ export function TradeTicket({ instrument }: { instrument: InstrumentDto }) {
         <button
           type="button"
           className="primary buy"
-          disabled={!stake || openTrade.isPending}
+          disabled={!instrument.tradable || !stake || openTrade.isPending}
           onClick={() => submit('buy')}
         >
           ▲ Compra
@@ -148,7 +147,7 @@ export function TradeTicket({ instrument }: { instrument: InstrumentDto }) {
         <button
           type="button"
           className="primary sell"
-          disabled={!stake || openTrade.isPending}
+          disabled={!instrument.tradable || !stake || openTrade.isPending}
           onClick={() => submit('sell')}
         >
           ▼ Venda

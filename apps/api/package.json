@@ -10,9 +10,11 @@
     "db:generate": "drizzle-kit generate"
   },
   "dependencies": {
-    "@notbroker/contracts": "*",
     "@electric-sql/pglite": "^0.5.8",
+    "@fastify/rate-limit": "^11.2.1",
+    "@fastify/static": "^10.1.6",
     "@fastify/websocket": "^11.3.3",
+    "@notbroker/contracts": "*",
     "better-auth": "^1.7.7",
     "decimal.js": "^10.6.0",
     "drizzle-orm": "^0.45.3",

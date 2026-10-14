@@ -15,11 +15,28 @@ declare module 'fastify' {
   }
 }
 
+/** Rotas que testam senha ou criam conta: alvo de força bruta e de cadastro em massa. */
+const CREDENTIAL_PATH = /^\/api\/auth\/(sign-in|sign-up)\//
+/** Pedidos por minuto, por IP: login/cadastro e o resto do Better Auth (sessão, logout). */
+const CREDENTIAL_RATE_LIMIT = 10
+const AUTH_RATE_LIMIT = 120
+
+const isCredentialRequest = (request: FastifyRequest) => CREDENTIAL_PATH.test(request.url)
+
 /** Repassa /api/auth/* para o handler web-standard do Better Auth. */
 export function registerAuthRoutes(app: FastifyInstance, auth: Auth): void {
   app.route({
     method: ['GET', 'POST'],
     url: '/api/auth/*',
+    config: {
+      rateLimit: {
+        timeWindow: '1 minute',
+        // Contadores separados: checar sessão várias vezes não gasta as tentativas de login.
+        keyGenerator: (request) =>
+          `auth:${isCredentialRequest(request) ? 'credential' : 'other'}:${request.ip}`,
+        max: (request) => (isCredentialRequest(request) ? CREDENTIAL_RATE_LIMIT : AUTH_RATE_LIMIT),
+      },
+    },
     handler: async (request, reply) => {
       const url = new URL(request.url, `http://${request.headers.host}`)
       const response = await auth.handler(

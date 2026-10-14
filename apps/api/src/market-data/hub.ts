@@ -6,7 +6,7 @@ const CANDLE_CACHE_MS = 15_000
 
 /**
  * Ponto único de preço do sistema. Recebe ticks de todos os provedores, guarda o último preço de
- * cada ativo e repassa para quem escuta (matching engine e gateway WebSocket).
+ * cada ativo e repassa para quem escuta (casa de binárias e gateway WebSocket).
  */
 export class MarketDataHub {
   readonly #routes: Record<Market, MarketDataProvider>
@@ -42,6 +42,11 @@ export class MarketDataHub {
   onTick(listener: TickListener): () => void {
     this.#listeners.add(listener)
     return () => this.#listeners.delete(listener)
+  }
+
+  /** Binária só abre em mercado cuja fonte é tempo real: com atraso, o resultado já é conhecido. */
+  isRealtime(market: Market): boolean {
+    return this.#routes[market].realtime
   }
 
   lastPrice(symbol: string): string | undefined {
