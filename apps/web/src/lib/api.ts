@@ -5,6 +5,7 @@ import type {
   FxRatesDto,
   InstrumentDto,
   OpenTradeInput,
+  ResetAccountInput,
   TradeDto,
 } from '@notbroker/contracts'
 
@@ -43,6 +44,8 @@ export const api = {
     request<CandleDto[]>(`/api/instruments/${symbol}/candles?interval=${interval}`),
   fx: () => request<FxRatesDto>('/api/fx'),
   account: () => request<AccountDto>('/api/account'),
+  resetAccount: (input: ResetAccountInput) =>
+    request<AccountDto>('/api/account/reset', { method: 'POST', body: JSON.stringify(input) }),
   trades: () => request<TradeDto[]>('/api/trades'),
   openTrade: (input: OpenTradeInput) =>
     request<TradeDto>('/api/trades', { method: 'POST', body: JSON.stringify(input) }),

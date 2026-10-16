@@ -101,6 +101,7 @@ export function parseAlpacaBars(payload: unknown): CandleDto[] {
 
 export class AlpacaProvider implements MarketDataProvider {
   readonly name = 'alpaca'
+  readonly realtime = true
   readonly #logger: Logger
   readonly #headers: Record<string, string>
   readonly #credentials: { key: string; secret: string }

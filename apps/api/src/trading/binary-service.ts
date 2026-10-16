@@ -2,6 +2,8 @@ import {
   ACCOUNT_CURRENCY,
   type AccountDto,
   expiryFor,
+  MAX_OPEN_TRADES,
+  type Market,
   type OpenTradeInput,
   PAYOUT_RATE,
   type TradeDirection,
@@ -9,12 +11,12 @@ import {
   type TradeStatus,
 } from '@notbroker/contracts'
 import { Decimal } from 'decimal.js'
-import { and, desc, eq } from 'drizzle-orm'
+import { and, count, desc, eq, gte, ne, sum } from 'drizzle-orm'
 import type { Database } from '../db/client.ts'
 import { binaryTrades, wallets } from '../db/schema/index.ts'
 import { findInstrument } from '../market-data/catalog.ts'
 import type { MarketDataHub } from '../market-data/hub.ts'
-import type { Logger } from '../market-data/provider.ts'
+import type { Logger, Tick } from '../market-data/provider.ts'
 import { AppError } from '../shared/errors.ts'
 
 type TradeRow = typeof binaryTrades.$inferSelect
@@ -23,18 +25,36 @@ type TradeListener = (userId: string, trade: TradeDto) => void
 const HISTORY_LIMIT = 100
 const SETTLE_EVERY_MS = 200
 /**
- * Cotação mais velha que isso = mercado fechado. 20 min porque a B3 pelo Yahoo já chega com
- * ~15 min de atraso; fora do pregão a última cotação tem horas.
+ * Idade máxima da cotação para abrir e para liquidar. Preço velho na entrada é resultado conhecido:
+ * quem vê o preço de agora em outro lugar sabe para onde ele foi. Cripto negocia o tempo todo;
+ * ações pelo IEX têm intervalos maiores entre negócios.
  */
-const MARKET_STALE_MS = 20 * 60_000
+const MAX_TICK_AGE_MS: Record<Market, number> = {
+  CRYPTO: 5_000,
+  US: 15_000,
+  B3: 15_000,
+}
+
+/**
+ * Quanto a abertura espera pelo próximo negócio. Cripto negocia várias vezes por segundo; ações
+ * pelo IEX ficam alguns segundos sem negócio (AMZN: 2,8 s na mediana, 14 s no p95, medido em
+ * 16/10/2026 na abertura do pregão).
+ */
+const ENTRY_WAIT_MS: Record<Market, number> = {
+  CRYPTO: 3_000,
+  US: 10_000,
+  B3: 10_000,
+}
 
 interface OpenTrade {
   id: string
   userId: string
   symbol: string
   expiresAt: number
-  /** Preço vigente na expiração, capturado pelo primeiro tick que chega depois dela. */
-  exitPrice?: string
+  /** 0 para ativo que saiu do catálogo: sem regra de preço, a operação é estornada. */
+  maxTickAgeMs: number
+  /** Último negócio até a expiração, capturado pelo primeiro tick que chega depois dela. */
+  exitTick?: Tick
 }
 
 export interface BinaryServiceOptions {
@@ -42,6 +62,8 @@ export interface BinaryServiceOptions {
   now?: () => number
   /** Desligado nos testes, que chamam settleDue() na mão. */
   autoSettle?: boolean
+  /** Espera pelo negócio de entrada; os testes usam um prazo curto. */
+  entryWaitMs?: Partial<Record<Market, number>>
 }
 
 /**
@@ -54,9 +76,10 @@ export class BinaryService {
   readonly #logger: Logger
   readonly #now: () => number
   readonly #autoSettle: boolean
+  readonly #entryWaitMs: Record<Market, number>
   readonly #open = new Map<string, OpenTrade>()
   readonly #listeners = new Set<TradeListener>()
-  readonly #prices = new Map<string, string>()
+  readonly #lastTicks = new Map<string, Tick>()
   #timer: NodeJS.Timeout | undefined
   #settling = false
 
@@ -71,6 +94,7 @@ export class BinaryService {
     this.#logger = logger
     this.#now = options.now ?? Date.now
     this.#autoSettle = options.autoSettle ?? true
+    this.#entryWaitMs = { ...ENTRY_WAIT_MS, ...options.entryWaitMs }
   }
 
   /**
@@ -84,12 +108,12 @@ export class BinaryService {
       else this.#track(row)
     }
     this.#hub.onTick((tick) => {
+      const previous = this.#lastTicks.get(tick.symbol)
       for (const trade of this.#open.values()) {
-        if (trade.symbol !== tick.symbol || trade.exitPrice !== undefined) continue
-        if (trade.expiresAt <= tick.time)
-          trade.exitPrice = this.#prices.get(tick.symbol) ?? tick.price
+        if (trade.symbol !== tick.symbol || trade.exitTick !== undefined) continue
+        if (trade.expiresAt <= tick.time) trade.exitTick = previous ?? tick
       }
-      this.#prices.set(tick.symbol, tick.price)
+      this.#lastTicks.set(tick.symbol, tick)
     })
     if (this.#autoSettle) {
       this.#timer = setInterval(() => void this.settleDue(), SETTLE_EVERY_MS)
@@ -111,7 +135,74 @@ export class BinaryService {
       .from(wallets)
       .where(and(eq(wallets.userId, userId), eq(wallets.currency, ACCOUNT_CURRENCY)))
     if (!wallet) throw new AppError(500, 'ACCOUNT_MISSING', 'Conta não encontrada')
-    return { currency: ACCOUNT_CURRENCY, balance: wallet.balance }
+
+    // Agregado no banco: o histórico da tela é limitado, o desempenho não pode ser.
+    const rows = await this.#db
+      .select({
+        status: binaryTrades.status,
+        trades: count(),
+        staked: sum(binaryTrades.stake),
+        returned: sum(binaryTrades.payout),
+      })
+      .from(binaryTrades)
+      .where(
+        and(
+          eq(binaryTrades.userId, userId),
+          ne(binaryTrades.status, 'open'),
+          gte(binaryTrades.openedAt, wallet.startedAt),
+        ),
+      )
+      .groupBy(binaryTrades.status)
+
+    const stats = { won: 0, lost: 0, draw: 0, refunded: 0 }
+    let staked = new Decimal(0)
+    let returned = new Decimal(0)
+    for (const row of rows) {
+      if (row.status === 'open') continue
+      stats[row.status] = row.trades
+      staked = staked.plus(row.staked ?? 0)
+      returned = returned.plus(row.returned ?? 0)
+    }
+
+    return {
+      currency: ACCOUNT_CURRENCY,
+      balance: wallet.balance,
+      startingBalance: wallet.startingBalance,
+      startedAt: wallet.startedAt.toISOString(),
+      stats: { ...stats, staked: staked.toString(), netProfit: returned.minus(staked).toString() },
+    }
+  }
+
+  /**
+   * Começa uma banca nova com o saldo escolhido. Com operação aberta, recusa: zerar no meio dela
+   * jogaria fora um resultado que ainda não saiu.
+   */
+  async reset(userId: string, balance: string): Promise<AccountDto> {
+    await this.#db.transaction(async (tx) => {
+      const [wallet] = await tx
+        .select()
+        .from(wallets)
+        .where(and(eq(wallets.userId, userId), eq(wallets.currency, ACCOUNT_CURRENCY)))
+        .for('update')
+      if (!wallet) throw new AppError(500, 'ACCOUNT_MISSING', 'Conta não encontrada')
+      // Depois do lock na carteira: uma abertura simultânea espera ou já aparece aqui.
+      const [openCount] = await tx
+        .select({ value: count() })
+        .from(binaryTrades)
+        .where(and(eq(binaryTrades.userId, userId), eq(binaryTrades.status, 'open')))
+      if ((openCount?.value ?? 0) > 0) {
+        throw new AppError(
+          409,
+          'TRADES_OPEN',
+          'Espere as operações abertas fecharem para começar uma banca nova',
+        )
+      }
+      await tx
+        .update(wallets)
+        .set({ balance, startingBalance: balance, startedAt: new Date(this.#now()) })
+        .where(and(eq(wallets.userId, userId), eq(wallets.currency, ACCOUNT_CURRENCY)))
+    })
+    return this.account(userId)
   }
 
   async list(userId: string): Promise<TradeDto[]> {
@@ -128,11 +219,34 @@ export class BinaryService {
     const instrument = findInstrument(input.symbol)
     if (!instrument) throw new AppError(404, 'UNKNOWN_SYMBOL', `Ativo ${input.symbol} não existe`)
 
+    if (!this.#hub.isRealtime(instrument.market)) {
+      throw new AppError(
+        409,
+        'MARKET_DELAYED',
+        'Binária indisponível nesse mercado: a cotação chega com atraso. Só o gráfico está liberado.',
+      )
+    }
+    // A expiração conta de quando a ordem chegou: é a vela que o usuário viu ao clicar.
     const now = this.#now()
-    const tick = this.#hub.lastTick(instrument.symbol)
-    if (!tick) throw new AppError(409, 'NO_PRICE', 'Ainda sem cotação para esse ativo')
-    if (now - tick.time > MARKET_STALE_MS) {
-      throw new AppError(409, 'MARKET_CLOSED', 'Mercado fechado para esse ativo agora')
+    // Entrada no primeiro negócio depois da ordem, nunca no último antes dela. O último pode ter
+    // segundos de idade (IEX parado, feed travado), e quem acompanha o mercado em outra fonte já
+    // sabe para onde o preço foi. O próximo negócio ninguém conhece na hora do clique.
+    const waitMs = this.#entryWaitMs[instrument.market]
+    const tick = await this.#hub.nextTick(instrument.symbol, waitMs)
+    if (!tick) {
+      throw new AppError(
+        409,
+        'NO_FRESH_PRICE',
+        `Nenhum negócio novo em ${waitMs / 1000} s: mercado parado ou feed travado. Tente de novo.`,
+      )
+    }
+    // Negócio novo com horário velho (fila de reconexão): também não serve de entrada.
+    if (this.#now() - tick.time > MAX_TICK_AGE_MS[instrument.market]) {
+      throw new AppError(
+        409,
+        'MARKET_CLOSED',
+        'Sem cotação recente para esse ativo: mercado fechado ou feed parado',
+      )
     }
 
     const stake = new Decimal(input.stake)
@@ -143,6 +257,18 @@ export class BinaryService {
         .where(and(eq(wallets.userId, userId), eq(wallets.currency, ACCOUNT_CURRENCY)))
         .for('update')
       if (!wallet) throw new AppError(500, 'ACCOUNT_MISSING', 'Conta não encontrada')
+      // Contado depois do lock na carteira: duas aberturas simultâneas não furam o teto.
+      const [openCount] = await tx
+        .select({ value: count() })
+        .from(binaryTrades)
+        .where(and(eq(binaryTrades.userId, userId), eq(binaryTrades.status, 'open')))
+      if ((openCount?.value ?? 0) >= MAX_OPEN_TRADES) {
+        throw new AppError(
+          422,
+          'TOO_MANY_OPEN_TRADES',
+          `Limite de ${MAX_OPEN_TRADES} operações abertas ao mesmo tempo`,
+        )
+      }
       const balance = new Decimal(wallet.balance)
       if (balance.lessThan(stake)) {
         throw new AppError(422, 'INSUFFICIENT_FUNDS', 'Saldo insuficiente para esse valor')
@@ -174,7 +300,10 @@ export class BinaryService {
     return trade
   }
 
-  /** Liquida o que venceu, no preço vigente no momento da expiração. */
+  /**
+   * Liquida o que venceu, no preço vigente no momento da expiração. Se o feed estava parado naquele
+   * instante, o último preço não é o da expiração: a operação é estornada.
+   */
   async settleDue(): Promise<void> {
     if (this.#settling) return
     this.#settling = true
@@ -183,8 +312,9 @@ export class BinaryService {
       for (const trade of this.#open.values()) {
         if (trade.expiresAt > now) continue
         try {
-          // Sem tick depois da expiração, o último preço conhecido é o vigente naquele instante.
-          await this.#settle(trade.id, trade.exitPrice ?? this.#hub.lastPrice(trade.symbol) ?? null)
+          // Sem tick depois da expiração, o último negócio conhecido é o vigente naquele instante.
+          const exit = trade.exitTick ?? this.#hub.lastTick(trade.symbol)
+          await this.#settle(trade.id, exitPriceAt(trade, exit))
         } catch (error) {
           this.#logger.error({ err: error, tradeId: trade.id }, 'falha ao liquidar operação')
         }
@@ -237,12 +367,27 @@ export class BinaryService {
       userId: row.userId,
       symbol: row.symbol,
       expiresAt: row.expiresAt.getTime(),
+      maxTickAgeMs: maxTickAgeFor(row.symbol),
     })
   }
 
   #emit(userId: string, trade: TradeDto): void {
     for (const listener of this.#listeners) listener(userId, trade)
   }
+}
+
+function maxTickAgeFor(symbol: string): number {
+  const instrument = findInstrument(symbol)
+  return instrument ? MAX_TICK_AGE_MS[instrument.market] : 0
+}
+
+/** Preço de saída, ou null (estorno) quando o último negócio está longe demais da expiração. */
+export function exitPriceAt(
+  trade: { expiresAt: number; maxTickAgeMs: number },
+  tick: Tick | undefined,
+): string | null {
+  if (!tick) return null
+  return Math.abs(trade.expiresAt - tick.time) <= trade.maxTickAgeMs ? tick.price : null
 }
 
 /** Compra ganha se fechou acima da entrada; venda ganha se fechou abaixo; igual é empate. */

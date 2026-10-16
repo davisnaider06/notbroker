@@ -7,7 +7,12 @@ import { CATALOG } from '../market-data/catalog.ts'
 export async function openAccount(db: Executor, userId: string): Promise<void> {
   await db
     .insert(wallets)
-    .values({ userId, currency: ACCOUNT_CURRENCY, balance: STARTING_BALANCE })
+    .values({
+      userId,
+      currency: ACCOUNT_CURRENCY,
+      balance: STARTING_BALANCE,
+      startingBalance: STARTING_BALANCE,
+    })
     .onConflictDoNothing()
 }
 

@@ -33,6 +33,8 @@ do Yahoo.
 | Comando | O que faz |
 |---|---|
 | `npm run dev` | API (3333) + web (5173) com reload |
+| `npm run build` | Build do front em `apps/web/dist` |
+| `npm start` | Sobe a API servindo o build (use com `NODE_ENV=production`) |
 | `npm run verify` | Lint, typecheck e testes, a mesma checagem para rodar antes de subir |
 | `npm run fix` | Formata e corrige o que o Biome souber |
 | `npm run db:generate -w @notbroker/api` | Gera migration depois de mudar o schema. Ela é aplicada sozinha no próximo boot. |
@@ -48,5 +50,16 @@ do Yahoo.
 | `POST` | `/api/trades` `{ symbol, direction: buy\|sell, stake, expiration: 1m\|5m\|15m\|1h }` | sim |
 | `GET` | `/api/fx` (câmbio para exibição) | não |
 | `WS` | `/ws`: envie `{ type: "subscribe", symbols: [...] }`, recebe `tick` e `trade` | sim |
+
+## Produção
+
+```bash
+npm ci
+npm run build
+NODE_ENV=production BETTER_AUTH_SECRET=... BETTER_AUTH_URL=https://seu-dominio \
+  DATABASE_URL=postgres://... npm start
+```
+
+A API serve o front e a API na mesma porta. Detalhes em [ARCHITECTURE.md](./ARCHITECTURE.md#produção).
 
 As decisões técnicas e o porquê de cada uma estão em [ARCHITECTURE.md](./ARCHITECTURE.md).

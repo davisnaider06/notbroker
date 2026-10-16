@@ -98,6 +98,8 @@ export async function fetchYahooPrice(symbol: string): Promise<number> {
 
 export class YahooProvider implements MarketDataProvider {
   readonly name = 'yahoo'
+  /** Polling a cada 15 s, e a B3 ainda chega com ~15 min de atraso. */
+  readonly realtime = false
   readonly #logger: Logger
   readonly #pollMs: number
   readonly #lastSeen = new Map<string, string>()

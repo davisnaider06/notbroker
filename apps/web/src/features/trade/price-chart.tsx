@@ -1,24 +1,32 @@
 import {
+  ACCOUNT_CURRENCY,
   CANDLE_INTERVALS,
   type CandleDto,
   type CandleInterval,
   type InstrumentDto,
   MARKET_DATA_DELAY_MINUTES,
+  type TradeDto,
 } from '@notbroker/contracts'
 import { useQuery } from '@tanstack/react-query'
 import {
   CandlestickSeries,
   ColorType,
   createChart,
+  createSeriesMarkers,
   type IChartApi,
   type ISeriesApi,
+  type ISeriesMarkersPluginApi,
+  type ITimeScaleApi,
   LineStyle,
+  type Logical,
+  type SeriesMarker,
+  type Time,
   type UTCTimestamp,
 } from 'lightweight-charts'
 import { useEffect, useRef, useState } from 'react'
-import { api, queryKeys } from '../../lib/api.ts'
+import { ApiError, api, queryKeys } from '../../lib/api.ts'
 import { useMoneyFormatter } from '../../lib/display-currency.ts'
-import { formatCountdown, formatMoney, priceDecimals } from '../../lib/format.ts'
+import { formatCountdown, formatMoney, formatNumber, priceDecimals } from '../../lib/format.ts'
 import { marketStream, useLivePrice } from '../../lib/market-stream.ts'
 
 const INTERVAL_SECONDS: Record<CandleInterval, number> = {
@@ -36,6 +44,10 @@ const RIGHT_OFFSET_BARS = 3
 const ANIMATION_MS = 200
 /** Metade da altura do rótulo de preço do eixo (fonte 12 px): a contagem encosta logo abaixo. */
 const PRICE_LABEL_HALF_HEIGHT = 10
+/** Teto da espera entre tentativas de buscar o histórico. */
+const MAX_RETRY_DELAY_MS = 10_000
+/** Rótulos das linhas de expiração ficam empilhados com esse passo, o mais próximo em cima. */
+const EXPIRY_LABEL_STEP = 20
 
 /** O lightweight-charts desenha tudo em UTC; deslocamos para o fuso local do navegador. */
 const TZ_OFFSET = -new Date().getTimezoneOffset() * 60
@@ -49,6 +61,10 @@ export function PriceChart({ instrument }: { instrument: InstrumentDto }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
+  const markersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null)
+  /** Velas desenhadas: as marcas só podem ir em vela que existe, e a posição no tempo vem do índice. */
+  const barTimesRef = useRef(new Set<number>())
+  const barCountRef = useRef(0)
   /** Candle corrente com os valores reais; o que está desenhado pode estar no meio da animação. */
   const lastCandleRef = useRef<CandleDto | null>(null)
   const shownCloseRef = useRef<number | null>(null)
@@ -61,6 +77,10 @@ export function PriceChart({ instrument }: { instrument: InstrumentDto }) {
   const candles = useQuery({
     queryKey: queryKeys.candles(instrument.symbol, interval),
     queryFn: () => api.candles(instrument.symbol, interval),
+    // Provedor fora do ar passa: o gráfico continua tentando em vez de parar num erro.
+    // 4xx é pedido errado e não melhora repetindo.
+    retry: (_count, error) => !(error instanceof ApiError && error.status < 500),
+    retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, MAX_RETRY_DELAY_MS),
   })
 
   useEffect(() => {
@@ -71,6 +91,8 @@ export function PriceChart({ instrument }: { instrument: InstrumentDto }) {
         background: { type: ColorType.Solid, color: css('--surface') },
         textColor: css('--text-muted'),
         fontFamily: css('--font-mono'),
+        // A atribuição exigida pela licença fica no link da barra lateral (e no NOTICE).
+        attributionLogo: false,
       },
       grid: { vertLines: { color: css('--grid') }, horzLines: { color: css('--grid') } },
       timeScale: {
@@ -88,11 +110,13 @@ export function PriceChart({ instrument }: { instrument: InstrumentDto }) {
       wickDownColor: css('--down'),
       borderVisible: false,
     })
+    markersRef.current = createSeriesMarkers(seriesRef.current, [])
     chartRef.current = chart
     return () => {
       chart.remove()
       chartRef.current = null
       seriesRef.current = null
+      markersRef.current = null
     }
   }, [])
 
@@ -106,6 +130,8 @@ export function PriceChart({ instrument }: { instrument: InstrumentDto }) {
     if (!candles.data) {
       series.setData([])
       lastCandleRef.current = null
+      barTimesRef.current = new Set()
+      barCountRef.current = 0
       return
     }
     const decimals = priceDecimals(candles.data.at(-1)?.close ?? 1)
@@ -114,6 +140,8 @@ export function PriceChart({ instrument }: { instrument: InstrumentDto }) {
     })
     series.setData(candles.data.map((candle) => ({ ...candle, time: toChartTime(candle.time) })))
     lastCandleRef.current = candles.data.at(-1) ?? null
+    barTimesRef.current = new Set(candles.data.map((candle) => candle.time))
+    barCountRef.current = candles.data.length
 
     // Enquadra só ao abrir o ativo/intervalo; um refetch não desfaz o zoom que o usuário escolheu.
     if (fittedViewRef.current !== viewKey) {
@@ -182,7 +210,11 @@ export function PriceChart({ instrument }: { instrument: InstrumentDto }) {
       } else {
         cancelAnimationFrame(frame)
         // Fecha o candle anterior no valor real antes de abrir o próximo.
-        if (!sameCandle) seriesRef.current.update({ ...last, time: toChartTime(last.time) })
+        if (!sameCandle) {
+          seriesRef.current.update({ ...last, time: toChartTime(last.time) })
+          barTimesRef.current.add(start)
+          barCountRef.current += 1
+        }
         render(tick.price)
       }
     })
@@ -193,8 +225,12 @@ export function PriceChart({ instrument }: { instrument: InstrumentDto }) {
     }
   }, [instrument.symbol, interval])
 
-  // Operações abertas neste ativo: linha tracejada no preço de entrada, na cor da direção.
   const trades = useQuery({ queryKey: queryKeys.trades, queryFn: api.trades })
+  const openHere = (trades.data ?? []).filter(
+    (trade) => trade.status === 'open' && trade.symbol === instrument.symbol,
+  )
+
+  // Operações abertas neste ativo: linha tracejada no preço de entrada, na cor da direção.
   useEffect(() => {
     const series = seriesRef.current
     if (!series) return
@@ -214,6 +250,113 @@ export function PriceChart({ instrument }: { instrument: InstrumentDto }) {
       for (const line of lines) series.removePriceLine(line)
     }
   }, [trades.data, instrument.symbol])
+
+  // Marcas na vela de entrada (seta na direção) e na de saída (resultado). Recalculadas quando
+  // muda o histórico de velas ou de operações; vela que não está no gráfico fica sem marca.
+  useEffect(() => {
+    const bucket = INTERVAL_SECONDS[interval]
+    const bucketOf = (ms: number) => Math.floor(ms / 1000 / bucket) * bucket
+    // barTimesRef acabou de ser preenchido com estas velas pelo efeito do histórico.
+    if (!candles.data) {
+      markersRef.current?.setMarkers([])
+      return
+    }
+    const bars = barTimesRef.current
+    const markers: SeriesMarker<Time>[] = []
+    for (const trade of trades.data ?? []) {
+      if (trade.symbol !== instrument.symbol) continue
+      const buy = trade.direction === 'buy'
+      const entry = bucketOf(Date.parse(trade.openedAt))
+      if (bars.has(entry)) {
+        markers.push({
+          time: toChartTime(entry),
+          position: buy ? 'belowBar' : 'aboveBar',
+          shape: buy ? 'arrowUp' : 'arrowDown',
+          color: css(buy ? '--up' : '--down'),
+        })
+      }
+      if (trade.status === 'open') continue
+      // A operação vence no fechamento da vela: a marca vai na vela que terminou ali.
+      const exit = bucketOf(Date.parse(trade.expiresAt) - 1)
+      if (!bars.has(exit)) continue
+      // Texto curto: velas vizinhas com resultado não podem encavalar; a cor já diz win ou loss.
+      const net = Number(trade.payout ?? 0) - Number(trade.stake)
+      const text =
+        trade.status === 'won'
+          ? `+${formatNumber(net, 2, 2)}`
+          : trade.status === 'lost'
+            ? `−${formatNumber(trade.stake, 2, 2)}`
+            : trade.status === 'draw'
+              ? '='
+              : 'estorno'
+      markers.push({
+        time: toChartTime(exit),
+        position: buy ? 'aboveBar' : 'belowBar',
+        shape: 'circle',
+        color: css(
+          trade.status === 'won' ? '--up' : trade.status === 'lost' ? '--down' : '--text-muted',
+        ),
+        text,
+      })
+    }
+    markers.sort((a, b) => Number(a.time) - Number(b.time))
+    // Texto de velas vizinhas no mesmo lado encavala: a segunda fica só com o círculo colorido.
+    const lastTextAt = new Map<string, number>()
+    for (const marker of markers) {
+      if (!marker.text) continue
+      const previous = lastTextAt.get(marker.position)
+      if (previous !== undefined && Number(marker.time) - previous <= bucket) {
+        delete marker.text
+      } else {
+        lastTextAt.set(marker.position, Number(marker.time))
+      }
+    }
+    markersRef.current?.setMarkers(markers)
+  }, [trades.data, candles.data, instrument.symbol, interval])
+
+  // Linha vertical no instante em que cada operação aberta vence, com o tempo que falta. A posição
+  // sai do índice da vela (vale também à direita da última vela) e é atualizada por frame.
+  useEffect(() => {
+    const bucket = INTERVAL_SECONDS[interval]
+    let frame = 0
+
+    const update = () => {
+      frame = requestAnimationFrame(update)
+      const container = containerRef.current
+      const chart = chartRef.current
+      const last = lastCandleRef.current
+      if (!container || !chart) return
+      const lines = container.querySelectorAll<HTMLElement>('.expiry-line')
+      if (lines.length === 0) return
+      const timeScale = chart.timeScale()
+      const paneWidth = timeScale.width()
+      const paneHeight = container.clientHeight - timeScale.height()
+      const now = Date.now()
+      for (const line of lines) {
+        const expiresAt = Number(line.dataset.expires)
+        // A vela i ocupa [início, início + intervalo) centrada em i: o fim dela fica em i + 0,5.
+        const x = last
+          ? coordinateAt(
+              timeScale,
+              barCountRef.current - 1 + (expiresAt / 1000 - last.time) / bucket - 0.5,
+            )
+          : null
+        if (x === null || x < 0 || x > paneWidth) {
+          line.hidden = true
+          continue
+        }
+        line.hidden = false
+        line.style.height = `${paneHeight}px`
+        line.style.transform = `translateX(${Math.round(x)}px)`
+        const countdown = line.querySelector('.expiry-countdown')
+        const text = formatCountdown(expiresAt - now)
+        if (countdown && countdown.textContent !== text) countdown.textContent = text
+      }
+    }
+
+    frame = requestAnimationFrame(update)
+    return () => cancelAnimationFrame(frame)
+  }, [interval])
 
   // Contagem regressiva até o candle fechar, colada embaixo do rótulo de último preço no eixo.
   // Atualizada por frame e direto no DOM: acompanha a animação do preço sem re-render do React.
@@ -287,9 +430,48 @@ export function PriceChart({ instrument }: { instrument: InstrumentDto }) {
         </div>
       </header>
       <div className="chart" ref={containerRef}>
-        {candles.isError && <p className="chart-overlay error">{candles.error.message}</p>}
+        {!candles.data && (
+          <p className={`chart-overlay ${candles.isError ? 'error' : 'muted'}`}>
+            {candles.isError
+              ? candles.error.message
+              : candles.failureCount > 0
+                ? 'O provedor de cotações não respondeu. Tentando de novo…'
+                : 'Carregando histórico…'}
+          </p>
+        )}
         <span ref={countdownRef} className="candle-countdown" hidden />
+        {byExpiry(openHere).map((trade, stack) => (
+          <div
+            key={trade.id}
+            className="expiry-line"
+            data-direction={trade.direction === 'buy' ? 'up' : 'down'}
+            data-expires={Date.parse(trade.expiresAt)}
+            hidden
+          >
+            <span className="expiry-label" style={{ top: 8 + stack * EXPIRY_LABEL_STEP }}>
+              {trade.direction === 'buy' ? '▲' : '▼'} {formatMoney(trade.stake, ACCOUNT_CURRENCY)} ·{' '}
+              <span className="expiry-countdown" />
+            </span>
+          </div>
+        ))}
       </div>
     </section>
   )
+}
+
+/**
+ * Ordem de vencimento: cada rótulo ganha a sua altura na pilha. Linhas a poucas velas de distância
+ * teriam rótulos encavalados se ficassem todos na mesma altura.
+ */
+function byExpiry(trades: TradeDto[]): TradeDto[] {
+  return trades.toSorted((a, b) => Date.parse(a.expiresAt) - Date.parse(b.expiresAt))
+}
+
+/** logicalToCoordinate só aceita índice inteiro (fracionário vira 0): interpola entre os vizinhos. */
+function coordinateAt(timeScale: ITimeScaleApi<Time>, logical: number): number | null {
+  const base = Math.floor(logical)
+  const left = timeScale.logicalToCoordinate(base as Logical)
+  const right = timeScale.logicalToCoordinate((base + 1) as Logical)
+  if (left === null || right === null) return null
+  return left + (right - left) * (logical - base)
 }

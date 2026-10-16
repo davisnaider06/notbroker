@@ -1,3 +1,4 @@
+import { resolve } from 'node:path'
 import { pino } from 'pino'
 import { buildApp } from './app.ts'
 import { createAuth } from './auth/auth.ts'
@@ -27,16 +28,30 @@ const alpaca =
     ? new AlpacaProvider(logger, { key: env.ALPACA_KEY_ID, secret: env.ALPACA_SECRET_KEY })
     : undefined
 const yahoo = new YahooProvider(logger, env.YAHOO_POLL_MS)
-const hub = new MarketDataHub({
-  CRYPTO: new BinanceProvider(logger),
-  B3: yahoo,
-  US: alpaca ?? yahoo,
-})
+const hub = new MarketDataHub(
+  {
+    CRYPTO: new BinanceProvider(logger),
+    B3: yahoo,
+    US: alpaca ?? yahoo,
+  },
+  logger,
+)
 logger.info(`ações dos EUA via ${alpaca ? 'Alpaca (WebSocket)' : 'Yahoo (polling)'}`)
 
 const auth = createAuth(database.db, env)
 const binaryService = new BinaryService(database.db, hub, logger)
-const app = await buildApp({ auth, hub, fx: new YahooFx(logger), binaryService }, { logger })
+const production = env.NODE_ENV === 'production'
+const app = await buildApp(
+  { auth, hub, fx: new YahooFx(logger), binaryService },
+  {
+    logger,
+    trustProxy: env.TRUST_PROXY,
+    // Em produção a API serve o front; em dev quem serve é o Vite, com proxy para cá.
+    webDist:
+      env.WEB_DIST ?? (production ? resolve(import.meta.dirname, '../../web/dist') : undefined),
+    hsts: production && new URL(env.BETTER_AUTH_URL).protocol === 'https:',
+  },
+)
 
 await binaryService.start()
 hub.start(CATALOG)

@@ -11,6 +11,8 @@
   ],
   "scripts": {
     "dev": "node scripts/dev.ts",
+    "build": "npm run build -w @notbroker/web",
+    "start": "npm run start -w @notbroker/api",
     "test": "npm run test --workspaces --if-present",
     "typecheck": "tsc -p . && npm run typecheck --workspaces --if-present",
     "check": "biome check .",

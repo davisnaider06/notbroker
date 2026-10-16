@@ -1,5 +1,8 @@
 import { z } from 'zod'
 
+/** Placeholder do .env.example. Público no GitHub: em produção, assina sessão que qualquer um forja. */
+export const EXAMPLE_AUTH_SECRET = 'troque-por-um-segredo-com-32-caracteres-ou-mais'
+
 const envSchema = z
   .object({
     NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
@@ -11,10 +14,21 @@ const envSchema = z
     ALPACA_KEY_ID: z.string().min(1).optional(),
     ALPACA_SECRET_KEY: z.string().min(1).optional(),
     YAHOO_POLL_MS: z.coerce.number().int().min(5000).default(15000),
+    /** Ligue quando houver proxy/load balancer na frente: o IP do cliente vem do X-Forwarded-For. */
+    TRUST_PROXY: z.stringbool().default(false),
+    /** Pasta do build do front. Sem ela, em produção a API usa apps/web/dist. */
+    WEB_DIST: z.string().min(1).optional(),
   })
   .refine((env) => Boolean(env.ALPACA_KEY_ID) === Boolean(env.ALPACA_SECRET_KEY), {
     message: 'ALPACA_KEY_ID e ALPACA_SECRET_KEY vão juntas',
   })
+  .refine(
+    (env) => env.NODE_ENV !== 'production' || env.BETTER_AUTH_SECRET !== EXAMPLE_AUTH_SECRET,
+    {
+      message: 'BETTER_AUTH_SECRET ainda é o valor do .env.example: gere um segredo novo',
+      path: ['BETTER_AUTH_SECRET'],
+    },
+  )
 
 export type Env = z.infer<typeof envSchema>
 

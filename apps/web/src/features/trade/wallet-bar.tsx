@@ -1,4 +1,4 @@
-import { ACCOUNT_CURRENCY } from '@notbroker/contracts'
+import { ACCOUNT_CURRENCY, type AccountDto } from '@notbroker/contracts'
 import { useQuery } from '@tanstack/react-query'
 import { api, queryKeys } from '../../lib/api.ts'
 import { formatMoney } from '../../lib/format.ts'
@@ -19,6 +19,7 @@ export function WalletBar() {
       <div className="wallet">
         <span className="label">Saldo</span>
         <strong>{account.data ? formatMoney(account.data.balance, ACCOUNT_CURRENCY) : '—'}</strong>
+        {account.data && <BancaResult account={account.data} inPlay={inPlay} />}
         {inPlay > 0 && (
           <span className="muted small">
             {formatMoney(inPlay, ACCOUNT_CURRENCY)} em operações abertas
@@ -26,5 +27,20 @@ export function WalletBar() {
         )}
       </div>
     </div>
+  )
+}
+
+/** Quanto a banca andou desde o início, contando o que está em jogo pelo valor apostado. */
+function BancaResult({ account, inPlay }: { account: AccountDto; inPlay: number }) {
+  const result = Number(account.balance) + inPlay - Number(account.startingBalance)
+  const tone = result > 0 ? 'up' : result < 0 ? 'down' : 'muted'
+  return (
+    <span
+      className={`small ${tone}`}
+      title={`Banca começou com ${formatMoney(account.startingBalance, ACCOUNT_CURRENCY)}`}
+    >
+      {result > 0 ? '+' : ''}
+      {formatMoney(result, ACCOUNT_CURRENCY)} na banca
+    </span>
   )
 }
