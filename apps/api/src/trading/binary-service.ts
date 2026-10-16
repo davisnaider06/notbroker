@@ -11,7 +11,7 @@ import {
   type TradeStatus,
 } from '@notbroker/contracts'
 import { Decimal } from 'decimal.js'
-import { and, count, desc, eq } from 'drizzle-orm'
+import { and, count, desc, eq, gte, ne, sum } from 'drizzle-orm'
 import type { Database } from '../db/client.ts'
 import { binaryTrades, wallets } from '../db/schema/index.ts'
 import { findInstrument } from '../market-data/catalog.ts'
@@ -35,6 +35,17 @@ const MAX_TICK_AGE_MS: Record<Market, number> = {
   B3: 15_000,
 }
 
+/**
+ * Quanto a abertura espera pelo próximo negócio. Cripto negocia várias vezes por segundo; ações
+ * pelo IEX ficam alguns segundos sem negócio (AMZN: 2,8 s na mediana, 14 s no p95, medido em
+ * 16/10/2026 na abertura do pregão).
+ */
+const ENTRY_WAIT_MS: Record<Market, number> = {
+  CRYPTO: 3_000,
+  US: 10_000,
+  B3: 10_000,
+}
+
 interface OpenTrade {
   id: string
   userId: string
@@ -51,6 +62,8 @@ export interface BinaryServiceOptions {
   now?: () => number
   /** Desligado nos testes, que chamam settleDue() na mão. */
   autoSettle?: boolean
+  /** Espera pelo negócio de entrada; os testes usam um prazo curto. */
+  entryWaitMs?: Partial<Record<Market, number>>
 }
 
 /**
@@ -63,6 +76,7 @@ export class BinaryService {
   readonly #logger: Logger
   readonly #now: () => number
   readonly #autoSettle: boolean
+  readonly #entryWaitMs: Record<Market, number>
   readonly #open = new Map<string, OpenTrade>()
   readonly #listeners = new Set<TradeListener>()
   readonly #lastTicks = new Map<string, Tick>()
@@ -80,6 +94,7 @@ export class BinaryService {
     this.#logger = logger
     this.#now = options.now ?? Date.now
     this.#autoSettle = options.autoSettle ?? true
+    this.#entryWaitMs = { ...ENTRY_WAIT_MS, ...options.entryWaitMs }
   }
 
   /**
@@ -120,7 +135,74 @@ export class BinaryService {
       .from(wallets)
       .where(and(eq(wallets.userId, userId), eq(wallets.currency, ACCOUNT_CURRENCY)))
     if (!wallet) throw new AppError(500, 'ACCOUNT_MISSING', 'Conta não encontrada')
-    return { currency: ACCOUNT_CURRENCY, balance: wallet.balance }
+
+    // Agregado no banco: o histórico da tela é limitado, o desempenho não pode ser.
+    const rows = await this.#db
+      .select({
+        status: binaryTrades.status,
+        trades: count(),
+        staked: sum(binaryTrades.stake),
+        returned: sum(binaryTrades.payout),
+      })
+      .from(binaryTrades)
+      .where(
+        and(
+          eq(binaryTrades.userId, userId),
+          ne(binaryTrades.status, 'open'),
+          gte(binaryTrades.openedAt, wallet.startedAt),
+        ),
+      )
+      .groupBy(binaryTrades.status)
+
+    const stats = { won: 0, lost: 0, draw: 0, refunded: 0 }
+    let staked = new Decimal(0)
+    let returned = new Decimal(0)
+    for (const row of rows) {
+      if (row.status === 'open') continue
+      stats[row.status] = row.trades
+      staked = staked.plus(row.staked ?? 0)
+      returned = returned.plus(row.returned ?? 0)
+    }
+
+    return {
+      currency: ACCOUNT_CURRENCY,
+      balance: wallet.balance,
+      startingBalance: wallet.startingBalance,
+      startedAt: wallet.startedAt.toISOString(),
+      stats: { ...stats, staked: staked.toString(), netProfit: returned.minus(staked).toString() },
+    }
+  }
+
+  /**
+   * Começa uma banca nova com o saldo escolhido. Com operação aberta, recusa: zerar no meio dela
+   * jogaria fora um resultado que ainda não saiu.
+   */
+  async reset(userId: string, balance: string): Promise<AccountDto> {
+    await this.#db.transaction(async (tx) => {
+      const [wallet] = await tx
+        .select()
+        .from(wallets)
+        .where(and(eq(wallets.userId, userId), eq(wallets.currency, ACCOUNT_CURRENCY)))
+        .for('update')
+      if (!wallet) throw new AppError(500, 'ACCOUNT_MISSING', 'Conta não encontrada')
+      // Depois do lock na carteira: uma abertura simultânea espera ou já aparece aqui.
+      const [openCount] = await tx
+        .select({ value: count() })
+        .from(binaryTrades)
+        .where(and(eq(binaryTrades.userId, userId), eq(binaryTrades.status, 'open')))
+      if ((openCount?.value ?? 0) > 0) {
+        throw new AppError(
+          409,
+          'TRADES_OPEN',
+          'Espere as operações abertas fecharem para começar uma banca nova',
+        )
+      }
+      await tx
+        .update(wallets)
+        .set({ balance, startingBalance: balance, startedAt: new Date(this.#now()) })
+        .where(and(eq(wallets.userId, userId), eq(wallets.currency, ACCOUNT_CURRENCY)))
+    })
+    return this.account(userId)
   }
 
   async list(userId: string): Promise<TradeDto[]> {
@@ -144,10 +226,22 @@ export class BinaryService {
         'Binária indisponível nesse mercado: a cotação chega com atraso. Só o gráfico está liberado.',
       )
     }
+    // A expiração conta de quando a ordem chegou: é a vela que o usuário viu ao clicar.
     const now = this.#now()
-    const tick = this.#hub.lastTick(instrument.symbol)
-    if (!tick) throw new AppError(409, 'NO_PRICE', 'Ainda sem cotação para esse ativo')
-    if (now - tick.time > MAX_TICK_AGE_MS[instrument.market]) {
+    // Entrada no primeiro negócio depois da ordem, nunca no último antes dela. O último pode ter
+    // segundos de idade (IEX parado, feed travado), e quem acompanha o mercado em outra fonte já
+    // sabe para onde o preço foi. O próximo negócio ninguém conhece na hora do clique.
+    const waitMs = this.#entryWaitMs[instrument.market]
+    const tick = await this.#hub.nextTick(instrument.symbol, waitMs)
+    if (!tick) {
+      throw new AppError(
+        409,
+        'NO_FRESH_PRICE',
+        `Nenhum negócio novo em ${waitMs / 1000} s: mercado parado ou feed travado. Tente de novo.`,
+      )
+    }
+    // Negócio novo com horário velho (fila de reconexão): também não serve de entrada.
+    if (this.#now() - tick.time > MAX_TICK_AGE_MS[instrument.market]) {
       throw new AppError(
         409,
         'MARKET_CLOSED',

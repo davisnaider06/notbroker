@@ -663,3 +663,141 @@ td {
   font-size: 12px;
   line-height: 1.4;
 }
+
+.stake-chips .ghost {
+  display: grid;
+  gap: 1px;
+}
+
+.stake-chips .ghost.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.chip-amount {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+/* Desempenho da banca */
+.performance {
+  display: grid;
+  gap: 20px;
+  padding: 14px 16px;
+}
+
+.performance p,
+.performance h3 {
+  margin: 0;
+}
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+  margin: 8px 0 0;
+}
+
+.stat-grid > div {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+
+.stat-grid dt {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.stat-grid dd {
+  display: grid;
+  gap: 2px;
+  margin: 4px 0 0;
+  font-family: var(--font-mono);
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+}
+
+.stat-grid dd .small {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.reset-form {
+  display: grid;
+  gap: 8px;
+  max-width: 560px;
+}
+
+.reset-form h3 {
+  font-size: 13px;
+}
+
+.reset-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.reset-row input {
+  width: 120px;
+}
+
+/* Vencimento das operações abertas: a posição horizontal vem do JS a cada frame. */
+.expiry-line {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 2;
+  width: 0;
+  border-left: 1px dashed var(--text-muted);
+  pointer-events: none;
+}
+
+.expiry-line[hidden] {
+  display: none;
+}
+
+.expiry-line[data-direction="up"] {
+  border-left-color: var(--up);
+}
+
+.expiry-line[data-direction="down"] {
+  border-left-color: var(--down);
+}
+
+/* À esquerda da linha: do lado direito ficaria em cima da escala de preço. */
+.expiry-label {
+  position: absolute;
+  right: 4px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: var(--surface-2);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.expiry-line[data-direction="up"] .expiry-label {
+  color: var(--up);
+}
+
+.expiry-line[data-direction="down"] .expiry-label {
+  color: var(--down);
+}
+
+/* Atribuição exigida pela licença da lightweight-charts */
+.attribution {
+  margin: 0;
+  padding: 12px 16px;
+  font-size: 11px;
+}
+
+.attribution a {
+  color: inherit;
+}

@@ -44,6 +44,9 @@ export const wallets = pgTable(
     currency: currencyEnum('currency').notNull(),
     balance: decimal('balance').notNull(),
     locked: decimal('locked').notNull().default('0'),
+    /** Saldo com que a banca atual começou; o desempenho conta a partir de startedAt. */
+    startingBalance: decimal('starting_balance').notNull().default('10000'),
+    startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [primaryKey({ columns: [table.userId, table.currency] })],
 )

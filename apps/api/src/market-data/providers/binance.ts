@@ -59,6 +59,8 @@ export class BinanceProvider implements MarketDataProvider {
       name: this.name,
       url: `${STREAM_URL}?streams=${streams}`,
       logger: this.#logger,
+      // Cinco criptos no mesmo canal negociam o tempo todo: 5 s sem nada é conexão travada.
+      idleTimeoutMs: 5_000,
       onOpen: () => {},
       onMessage: (data) => {
         const tick = parseBinanceMessage(data)

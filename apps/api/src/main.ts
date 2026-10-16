@@ -28,11 +28,14 @@ const alpaca =
     ? new AlpacaProvider(logger, { key: env.ALPACA_KEY_ID, secret: env.ALPACA_SECRET_KEY })
     : undefined
 const yahoo = new YahooProvider(logger, env.YAHOO_POLL_MS)
-const hub = new MarketDataHub({
-  CRYPTO: new BinanceProvider(logger),
-  B3: yahoo,
-  US: alpaca ?? yahoo,
-})
+const hub = new MarketDataHub(
+  {
+    CRYPTO: new BinanceProvider(logger),
+    B3: yahoo,
+    US: alpaca ?? yahoo,
+  },
+  logger,
+)
 logger.info(`ações dos EUA via ${alpaca ? 'Alpaca (WebSocket)' : 'Yahoo (polling)'}`)
 
 const auth = createAuth(database.db, env)

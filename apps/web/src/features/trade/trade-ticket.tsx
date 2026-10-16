@@ -14,9 +14,12 @@ import { useEffect, useState } from 'react'
 import { api, queryKeys } from '../../lib/api.ts'
 import { formatCountdown, formatMoney, formatNumber, formatPrice } from '../../lib/format.ts'
 import { marketStream } from '../../lib/market-stream.ts'
+import { stakeForPercent } from '../../lib/stake.ts'
 import { useNow } from '../../lib/use-now.ts'
 
-const QUICK_STAKES = ['10', '50', '100', '500']
+/** Atalhos em % do saldo: o mesmo clique serve para banca de R$ 100 e de R$ 10.000. */
+const QUICK_PERCENTS = [1, 2, 5, 10]
+const DEFAULT_PERCENT = 2
 const PAYOUT_PERCENT = Math.round(Number(PAYOUT_RATE) * 100)
 
 const DIRECTION_LABEL: Record<TradeDirection, string> = { buy: 'Compra', sell: 'Venda' }
@@ -32,7 +35,8 @@ function parseStake(text: string): string | null {
 
 export function TradeTicket({ instrument }: { instrument: InstrumentDto }) {
   const queryClient = useQueryClient()
-  const [stakeText, setStakeText] = useState('100')
+  /** null até o usuário escolher: o valor sugerido acompanha o saldo. */
+  const [stakeText, setStakeText] = useState<string | null>(null)
   const [expiration, setExpiration] = useState<Expiration>('1m')
   const [feedback, setFeedback] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null)
   const [lastResult, setLastResult] = useState<TradeDto | null>(null)
@@ -48,7 +52,12 @@ export function TradeTicket({ instrument }: { instrument: InstrumentDto }) {
     [],
   )
 
-  const stake = parseStake(stakeText)
+  const balance = account.data ? Number(account.data.balance) : null
+  const shownStake =
+    stakeText ??
+    (account.data ? (stakeForPercent(account.data.balance, DEFAULT_PERCENT) ?? '') : '')
+  const stake = parseStake(shownStake)
+  const overBalance = stake !== null && balance !== null && Number(stake) > balance
   const profit = stake ? Number(stake) * Number(PAYOUT_RATE) : 0
   const expiresAt = expiryFor(now, expiration)
 
@@ -81,21 +90,26 @@ export function TradeTicket({ instrument }: { instrument: InstrumentDto }) {
         Valor (R$)
         <input
           inputMode="decimal"
-          value={stakeText}
+          value={shownStake}
           onChange={(event) => setStakeText(event.target.value)}
         />
       </label>
       <div className="stake-chips">
-        {QUICK_STAKES.map((value) => (
-          <button
-            key={value}
-            type="button"
-            className="ghost small"
-            onClick={() => setStakeText(value)}
-          >
-            R$ {value}
-          </button>
-        ))}
+        {QUICK_PERCENTS.map((percent) => {
+          const value = account.data ? stakeForPercent(account.data.balance, percent) : null
+          return (
+            <button
+              key={percent}
+              type="button"
+              className={`ghost small ${value !== null && value === stake ? 'active' : ''}`}
+              disabled={value === null}
+              title={value ? `${percent}% do saldo` : undefined}
+              onClick={() => value && setStakeText(value)}
+            >
+              {percent}%<span className="chip-amount">{value ? money(value) : '—'}</span>
+            </button>
+          )
+        })}
       </div>
 
       <div className="field">
@@ -138,7 +152,7 @@ export function TradeTicket({ instrument }: { instrument: InstrumentDto }) {
         <button
           type="button"
           className="primary buy"
-          disabled={!instrument.tradable || !stake || openTrade.isPending}
+          disabled={!instrument.tradable || !stake || overBalance || openTrade.isPending}
           onClick={() => submit('buy')}
         >
           ▲ Compra
@@ -147,7 +161,7 @@ export function TradeTicket({ instrument }: { instrument: InstrumentDto }) {
         <button
           type="button"
           className="primary sell"
-          disabled={!instrument.tradable || !stake || openTrade.isPending}
+          disabled={!instrument.tradable || !stake || overBalance || openTrade.isPending}
           onClick={() => submit('sell')}
         >
           ▼ Venda
@@ -155,7 +169,11 @@ export function TradeTicket({ instrument }: { instrument: InstrumentDto }) {
         </button>
       </div>
 
-      {!stake && <p className="error small">Valor mínimo R$ {MIN_STAKE}, até 2 casas decimais</p>}
+      {!stake && account.data && (
+        <p className="error small">Valor mínimo R$ {MIN_STAKE}, até 2 casas decimais</p>
+      )}
+      {overBalance && <p className="error small">Valor maior que o saldo</p>}
+      {openTrade.isPending && <p className="muted small">Abrindo no próximo negócio…</p>}
       {feedback && <p className={feedback.kind === 'ok' ? 'success' : 'error'}>{feedback.text}</p>}
       {lastResult && <ResultBanner trade={lastResult} />}
     </div>

@@ -72,10 +72,47 @@ export interface TradeDto {
   settledAt: string | null
 }
 
+/** Faixa aceita ao começar uma banca nova. */
+export const MIN_STARTING_BALANCE = 10
+export const MAX_STARTING_BALANCE = 1_000_000
+
+/** Recomeça a conta com o saldo escolhido; o desempenho passa a contar dali. */
+export const resetAccountSchema = z.object({
+  balance: z
+    .string()
+    .trim()
+    .regex(/^\d+(\.\d{1,2})?$/, 'saldo deve ter no máximo 2 casas decimais')
+    .refine(
+      (value) => Number(value) >= MIN_STARTING_BALANCE && Number(value) <= MAX_STARTING_BALANCE,
+      `saldo entre R$ ${MIN_STARTING_BALANCE} e R$ ${MAX_STARTING_BALANCE.toLocaleString('pt-BR')}`,
+    ),
+})
+
+export type ResetAccountInput = z.infer<typeof resetAccountSchema>
+
+/** Desempenho das operações fechadas desde o início da banca atual. */
+export interface AccountStatsDto {
+  won: number
+  lost: number
+  draw: number
+  refunded: number
+  /** Soma dos valores apostados nas operações fechadas. */
+  staked: string
+  /** Soma de (retorno − valor) nas operações fechadas. */
+  netProfit: string
+}
+
 export interface AccountDto {
   currency: typeof ACCOUNT_CURRENCY
   balance: string
+  /** Saldo com que a banca atual começou. */
+  startingBalance: string
+  startedAt: string
+  stats: AccountStatsDto
 }
+
+/** Acerto mínimo para empatar: cada win paga PAYOUT_RATE, cada loss perde 1. */
+export const BREAKEVEN_WIN_RATE = 1 / (1 + Number(PAYOUT_RATE))
 
 /**
  * Situação de uma operação se fechasse agora. Mesma regra do servidor, em number: serve só para a

@@ -13,8 +13,9 @@ import { api, queryKeys } from '../../lib/api.ts'
 import { formatCountdown, formatMoney, formatPrice, formatTime } from '../../lib/format.ts'
 import { useLivePrice } from '../../lib/market-stream.ts'
 import { useNow } from '../../lib/use-now.ts'
+import { PerformancePanel } from './performance-panel.tsx'
 
-type Tab = 'open' | 'history'
+type Tab = 'open' | 'history' | 'performance'
 
 const DIRECTION_LABEL: Record<TradeDirection, string> = { buy: '▲ Compra', sell: '▼ Venda' }
 
@@ -52,6 +53,13 @@ export function AccountPanel({ instruments }: { instruments: InstrumentDto[] }) 
           onClick={() => setTab('history')}
         >
           Histórico
+        </button>
+        <button
+          type="button"
+          className={tab === 'performance' ? 'active' : ''}
+          onClick={() => setTab('performance')}
+        >
+          Desempenho
         </button>
       </div>
 
@@ -104,6 +112,8 @@ export function AccountPanel({ instruments }: { instruments: InstrumentDto[] }) 
               </tbody>
             </table>
           ))}
+
+        {tab === 'performance' && <PerformancePanel openCount={open.length} />}
       </div>
     </section>
   )

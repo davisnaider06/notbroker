@@ -54,6 +54,12 @@ export function TradeScreen({ user }: { user: { name: string; email: string } })
         ) : (
           <p className="muted pad">Carregando ativos…</p>
         )}
+        <p className="attribution muted small">
+          Gráficos:{' '}
+          <a href="https://www.tradingview.com/" target="_blank" rel="noopener noreferrer">
+            TradingView Lightweight Charts™
+          </a>
+        </p>
       </aside>
 
       <main className="workspace">

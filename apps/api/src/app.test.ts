@@ -30,8 +30,11 @@ const silentProvider: MarketDataProvider = {
 /** Como o Yahoo na B3: polling com atraso, só para gráfico. */
 const delayedProvider: MarketDataProvider = { ...silentProvider, name: 'delayed', realtime: false }
 
-/** Relógio do teste: começa 10 s depois da virada do minuto, longe do corte de 30 s. */
-let clock = Date.UTC(2026, 9, 8, 13, 0, 10)
+/**
+ * Relógio do teste: 10 s depois da próxima virada de minuto, longe do corte de 30 s. Fica à frente
+ * do relógio real porque o início da banca (cadastro) é gravado com a hora real.
+ */
+let clock = Math.ceil(Date.now() / 60_000) * 60_000 + 10_000
 let app: FastifyInstance
 let hub: MarketDataHub
 let binaryService: BinaryService
@@ -59,8 +62,28 @@ async function balance(): Promise<number> {
   return Number(body.balance)
 }
 
+/** Prazo curto de espera pelo negócio de entrada: o teste não fica parado 3 s a cada recusa. */
+const ENTRY_WAIT_MS = 300
+
+/**
+ * Abre operação com o feed vivo: enquanto a ordem está em andamento, o último negócio do ativo é
+ * reenviado, como faria um mercado negociando. A entrada é o primeiro negócio depois da ordem.
+ */
 async function openTrade(symbol: string, direction: 'buy' | 'sell', stake = '100', as = cookie) {
-  return call<TradeDto>('POST', '/api/trades', { symbol, direction, stake, expiration: '1m' }, as)
+  const feed = setInterval(() => {
+    const tick = hub.lastTick(symbol)
+    if (tick) hub.publish({ ...tick })
+  }, 5)
+  try {
+    return await call<TradeDto>(
+      'POST',
+      '/api/trades',
+      { symbol, direction, stake, expiration: '1m' },
+      as,
+    )
+  } finally {
+    clearInterval(feed)
+  }
 }
 
 /** Negócio 1 s antes da expiração: é o preço vigente quando a operação fecha. */
@@ -79,10 +102,10 @@ async function signUp(email: string): Promise<string> {
 }
 
 /** Leva o relógio até a expiração da operação e liquida. */
-async function expire(trade: TradeDto): Promise<TradeDto> {
+async function expire(trade: TradeDto, as = cookie): Promise<TradeDto> {
   clock = Date.parse(trade.expiresAt) + 1
   await binaryService.settleDue()
-  const { body } = await call<TradeDto[]>('GET', '/api/trades')
+  const { body } = await call<TradeDto[]>('GET', '/api/trades', undefined, as)
   const settled = body.find((item) => item.id === trade.id)
   if (!settled) throw new Error(`operação ${trade.id} sumiu`)
   return settled
@@ -102,6 +125,7 @@ beforeAll(async () => {
   binaryService = new BinaryService(database.db, hub, console, {
     now: () => clock,
     autoSettle: false,
+    entryWaitMs: { CRYPTO: ENTRY_WAIT_MS, US: ENTRY_WAIT_MS, B3: ENTRY_WAIT_MS },
   })
   await binaryService.start()
   /** Câmbio fixo: o teste não sai para a rede. */
@@ -128,10 +152,46 @@ describe('casa de opções binárias', () => {
     const { body } = await call<AccountDto>('GET', '/api/account')
     expect(body.currency).toBe('BRL')
     expect(Number(body.balance)).toBe(10_000)
+    expect(body.stats).toMatchObject({ won: 0, lost: 0, draw: 0, refunded: 0 })
   })
 
   it('recusa operação sem cotação', async () => {
-    expect((await openTrade('ETHUSDT', 'buy')).status).toBe(409)
+    const { status, body } = await openTrade('ETHUSDT', 'buy')
+    expect(status).toBe(409)
+    expect(body).toMatchObject({ error: { code: 'NO_FRESH_PRICE' } })
+  })
+
+  it('feed travado: com último preço conhecido mas sem negócio novo, recusa', async () => {
+    price('SOLUSDT', '100')
+    // Sem o helper: nenhum negócio chega enquanto a ordem espera.
+    const { status, body } = await call<TradeDto>('POST', '/api/trades', {
+      symbol: 'SOLUSDT',
+      direction: 'buy',
+      stake: '100',
+      expiration: '1m',
+    })
+    expect(status).toBe(409)
+    expect(body).toMatchObject({ error: { code: 'NO_FRESH_PRICE' } })
+    expect(await balance()).toBe(10_000)
+  })
+
+  it('entrada é o primeiro negócio depois da ordem, não o último antes dela', async () => {
+    // Quem vê o mercado em outra fonte sabe que o preço já foi de 100 para 105; a casa ainda não.
+    price('SOLUSDT', '100')
+    const pending = call<TradeDto>('POST', '/api/trades', {
+      symbol: 'SOLUSDT',
+      direction: 'buy',
+      stake: '100',
+      expiration: '1m',
+    })
+    const feed = setInterval(() => price('SOLUSDT', '105'), 5)
+    const { status, body: trade } = await pending
+    clearInterval(feed)
+    expect(status).toBe(201)
+    expect(Number(trade.entryPrice)).toBe(105)
+    // Fecha empatado para não mexer no saldo que os testes seguintes conferem.
+    priceAtExpiry(trade, '105')
+    expect((await expire(trade)).status).toBe('draw')
   })
 
   it('B3 com cotação atrasada fica só no gráfico, mesmo com tick novo', async () => {
@@ -228,6 +288,52 @@ describe('casa de opções binárias', () => {
     const settled = await expire(trade)
     expect(settled.exitPrice).toBe('1.1000000000')
     expect(settled.status).toBe('won')
+  })
+
+  it('soma o desempenho das operações fechadas', async () => {
+    const { body } = await call<AccountDto>('GET', '/api/account')
+    expect(Number(body.startingBalance)).toBe(10_000)
+    // Inclui o empate do teste de preço de entrada.
+    expect(body.stats).toMatchObject({ won: 3, lost: 2, draw: 2, refunded: 1 })
+    expect(Number(body.stats.staked)).toBe(800)
+    expect(Number(body.stats.netProfit)).toBe(10)
+    expect(Number(body.balance)).toBe(10_010)
+  })
+
+  it('começa banca nova com o saldo escolhido e zera o desempenho', async () => {
+    const as = await signUp('banca@example.com')
+    const reset = (balance: string) =>
+      call<AccountDto>('POST', '/api/account/reset', { balance }, as)
+
+    const { status, body } = await reset('100')
+    expect(status).toBe(200)
+    expect(Number(body.balance)).toBe(100)
+    expect(Number(body.startingBalance)).toBe(100)
+
+    advance(1000)
+    price('BTCUSDT', '50000')
+    const { body: trade } = await openTrade('BTCUSDT', 'buy', '10', as)
+    // Com operação aberta, o resultado dela ainda não saiu: não dá para recomeçar.
+    expect(await reset('100')).toMatchObject({
+      status: 409,
+      body: { error: { code: 'TRADES_OPEN' } },
+    })
+
+    priceAtExpiry(trade, '50100')
+    await expire(trade, as)
+    const { body: after } = await call<AccountDto>('GET', '/api/account', undefined, as)
+    expect(Number(after.balance)).toBe(107)
+    expect(after.stats).toMatchObject({ won: 1, lost: 0 })
+    expect(Number(after.stats.netProfit)).toBe(7)
+
+    expect((await reset('5')).status).toBe(400)
+    expect((await reset('2000000')).status).toBe(400)
+
+    advance(1000)
+    const { body: fresh } = await reset('50')
+    expect(Number(fresh.balance)).toBe(50)
+    expect(fresh.stats).toMatchObject({ won: 0, lost: 0, draw: 0, refunded: 0 })
+    expect(Number(fresh.stats.netProfit)).toBe(0)
   })
 
   it('valida saldo e valor', async () => {

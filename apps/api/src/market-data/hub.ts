@@ -1,6 +1,12 @@
 import type { CandleDto, CandleInterval, Market } from '@notbroker/contracts'
 import { findInstrument, type Instrument } from './catalog.ts'
-import type { MarketDataProvider, Tick, TickListener } from './provider.ts'
+import {
+  type Logger,
+  type MarketDataProvider,
+  type Tick,
+  type TickListener,
+  UpstreamError,
+} from './provider.ts'
 
 const CANDLE_CACHE_MS = 15_000
 
@@ -13,9 +19,13 @@ export class MarketDataHub {
   readonly #lastTicks = new Map<string, Tick>()
   readonly #listeners = new Set<TickListener>()
   readonly #candleCache = new Map<string, { expiresAt: number; candles: Promise<CandleDto[]> }>()
+  /** Último histórico que chegou inteiro, por ativo e intervalo: resposta de reserva se o provedor cair. */
+  readonly #lastGoodCandles = new Map<string, CandleDto[]>()
+  readonly #logger: Logger | undefined
 
-  constructor(routes: Record<Market, MarketDataProvider>) {
+  constructor(routes: Record<Market, MarketDataProvider>, logger?: Logger) {
     this.#routes = routes
+    this.#logger = logger
   }
 
   start(catalog: readonly Instrument[]): void {
@@ -57,14 +67,49 @@ export class MarketDataHub {
     return this.#lastTicks.get(symbol)
   }
 
+  /** Primeiro negócio do ativo que chegar a partir de agora; undefined se nada vier no prazo. */
+  nextTick(symbol: string, timeoutMs: number): Promise<Tick | undefined> {
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        stop()
+        resolve(undefined)
+      }, timeoutMs)
+      const stop = this.onTick((tick) => {
+        if (tick.symbol !== symbol) return
+        clearTimeout(timer)
+        stop()
+        resolve(tick)
+      })
+    })
+  }
+
   candles(instrument: Instrument, interval: CandleInterval): Promise<CandleDto[]> {
     const key = `${instrument.symbol}:${interval}`
     const cached = this.#candleCache.get(key)
     if (cached && cached.expiresAt > Date.now()) return cached.candles
 
-    const candles = this.#routes[instrument.market].candles(instrument, interval)
+    const provider = this.#routes[instrument.market]
+    const candles = provider.candles(instrument, interval).then(
+      (fresh) => {
+        this.#lastGoodCandles.set(key, fresh)
+        return fresh
+      },
+      (error: unknown) => {
+        this.#candleCache.delete(key)
+        // Histórico de minutos atrás é melhor que gráfico vazio: os ticks ao vivo continuam dali.
+        const stale = this.#lastGoodCandles.get(key)
+        this.#logger?.warn(
+          { err: error, key, servedStale: stale !== undefined },
+          'falha ao buscar histórico de velas',
+        )
+        if (stale) return stale
+        // Formato inesperado (zod) também é problema do provedor, não pedido inválido do cliente.
+        throw error instanceof UpstreamError
+          ? error
+          : new UpstreamError(provider.name, String(error))
+      },
+    )
     this.#candleCache.set(key, { expiresAt: Date.now() + CANDLE_CACHE_MS, candles })
-    candles.catch(() => this.#candleCache.delete(key))
     return candles
   }
 
