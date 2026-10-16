@@ -720,7 +720,7 @@ td {
   font-variant-numeric: tabular-nums;
 }
 
-.stat-grid dd .small {
+.stat-note {
   font-size: 11px;
   color: var(--text-muted);
 }

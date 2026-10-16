@@ -47,21 +47,21 @@ function Stats({ account }: { account: AccountDto }) {
           <dt>Resultado</dt>
           <dd className={tone(net)}>
             {signed(net)}
-            <span className="small">{starting > 0 ? percent(net / starting) : ''}</span>
+            <span className="stat-note">{starting > 0 ? percent(net / starting) : ''}</span>
           </dd>
         </div>
         <div>
           <dt>Acerto</dt>
           <dd className={winRate === null ? '' : winRate >= BREAKEVEN_WIN_RATE ? 'up' : 'down'}>
             {winRate === null ? '—' : percent(winRate)}
-            <span className="small">empata em {percent(BREAKEVEN_WIN_RATE)}</span>
+            <span className="stat-note">empata em {percent(BREAKEVEN_WIN_RATE)}</span>
           </dd>
         </div>
         <div>
           <dt>Operações</dt>
           <dd>
             {closed}
-            <span className="small">
+            <span className="stat-note">
               {stats.won} win · {stats.lost} loss
               {stats.draw + stats.refunded > 0 && ` · ${stats.draw + stats.refunded} devolvidas`}
             </span>
@@ -71,7 +71,7 @@ function Stats({ account }: { account: AccountDto }) {
           <dt>Volume apostado</dt>
           <dd>
             {money(stats.staked)}
-            <span className="small">
+            <span className="stat-note">
               {closed > 0 ? `média ${money(Number(stats.staked) / closed)}` : ''}
             </span>
           </dd>
