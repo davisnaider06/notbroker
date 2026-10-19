@@ -48,6 +48,15 @@ const ENTRY_WAIT_MS: Record<Market, number> = {
   B3: 10_000,
 }
 
+const DIRECTION_LOG: Record<TradeDirection, string> = { buy: 'compra', sell: 'venda' }
+const STATUS_LOG: Record<TradeStatus, string> = {
+  open: 'aberta',
+  won: 'ganhou',
+  lost: 'perdeu',
+  draw: 'empatou',
+  refunded: 'estornada',
+}
+
 interface OpenTrade {
   id: string
   userId: string
@@ -313,6 +322,18 @@ export class BinaryService {
 
     this.#track(row)
     const trade = toTradeDto(row)
+    this.#logger.info(
+      {
+        tradeId: trade.id,
+        userId,
+        symbol: trade.symbol,
+        direction: trade.direction,
+        stake: trade.stake,
+        entryPrice: trade.entryPrice,
+        expiresAt: trade.expiresAt,
+      },
+      `operação aberta: ${DIRECTION_LOG[trade.direction]} ${trade.symbol} R$ ${trade.stake} a ${trade.entryPrice}`,
+    )
     this.#emit(userId, trade)
     return trade
   }
@@ -378,7 +399,21 @@ export class BinaryService {
     })
 
     this.#open.delete(tradeId)
-    if (settled) this.#emit(settled.userId, toTradeDto(settled))
+    if (!settled) return
+    this.#logger.info(
+      {
+        tradeId: settled.id,
+        userId: settled.userId,
+        symbol: settled.symbol,
+        status: settled.status,
+        entryPrice: settled.entryPrice,
+        exitPrice: settled.exitPrice,
+        payout: settled.payout,
+      },
+      `operação fechada: ${DIRECTION_LOG[settled.direction]} ${settled.symbol} ${STATUS_LOG[settled.status]}, ` +
+        `${settled.entryPrice} → ${settled.exitPrice ?? 'sem preço'}, voltou R$ ${settled.payout}`,
+    )
+    this.#emit(settled.userId, toTradeDto(settled))
   }
 
   #track(row: TradeRow): void {

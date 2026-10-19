@@ -482,4 +482,22 @@ describe('janela de entrada e liquidação', () => {
     const { body } = await call<TradeDto[]>('GET', '/api/trades', undefined, windowUser)
     expect(body.find((item) => item.id === trade.id)).toMatchObject({ status: 'won' })
   })
+
+  it('operações na mesma vela são independentes: compra e venda podem ganhar as duas', async () => {
+    nextCandle(60_000, 1_000)
+    const { body: before } = await call<AccountDto>('GET', '/api/account', undefined, windowUser)
+    price('BTCUSDT', '100')
+    const { body: buy } = await openTrade('BTCUSDT', 'buy', '100', windowUser)
+    advance(2_000)
+    price('BTCUSDT', '110')
+    const { body: sell } = await openTrade('BTCUSDT', 'sell', '100', windowUser)
+    expect(sell.expiresAt).toBe(buy.expiresAt)
+
+    // Fechou entre as duas entradas: acima da compra e abaixo da venda.
+    priceAtExpiry(buy, '105')
+    expect((await expire(buy, windowUser)).status).toBe('won')
+    expect((await expire(sell, windowUser)).status).toBe('won')
+    const { body: after } = await call<AccountDto>('GET', '/api/account', undefined, windowUser)
+    expect(Number(after.balance) - Number(before.balance)).toBe(140)
+  })
 })
