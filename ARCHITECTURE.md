@@ -81,12 +81,19 @@ Ficam em `packages/contracts/src/trades.ts`, para a tela calcular com a mesma re
 - **Compra** ganha se o preço de saída ficar acima do de entrada; **venda** ganha se ficar abaixo.
 - Win devolve valor + 70% (payout gravado por operação). Loss perde o valor. Empate devolve o valor.
 - Expiração no fechamento da vela do tempo escolhido (1m, 5m, 15m, 1h), alinhada ao relógio UTC.
-  Com menos de 30 s para a vela fechar, a operação vai para a vela seguinte.
+- Entrada só nos primeiros 5 s por minuto de vela (1m = 5 s, 5m = 25 s, 15m = 75 s, 1h = 300 s),
+  contados da abertura da vela no mesmo relógio UTC. Fora disso, 409 `ENTRY_WINDOW_CLOSED`.
 - Mercado sem fonte tempo real não aceita operação (409 `MARKET_DELAYED`).
 - Entrada exige negócio recente: até 5 s em cripto, 15 s em ações (409 `MARKET_CLOSED`).
 - Saída: último negócio até a expiração. Se ele estiver mais longe que esse mesmo limite (feed
   parado naquele instante), a operação é estornada em vez de fechar num preço velho.
+- A liquidação espera o primeiro negócio depois da expiração (até 3 s em cripto, 10 s em ações);
+  sem ele, usa o último conhecido.
 - No máximo 20 operações abertas por usuário (422) e 30 aberturas por minuto (429).
+- Rate limit: 600 req/min por IP no geral; login/cadastro 10/min por IP; banca nova 5/min por
+  usuário. WebSocket: 5 conexões por usuário e 30 mensagens a cada 10 s por conexão (acima
+  disso, fecha com 1008).
+- A tela conta o tempo no relógio do servidor, estimado por ping/pong no WebSocket.
 - Valor mínimo R$ 1, no máximo 2 casas decimais.
 
 ## Limites conhecidos

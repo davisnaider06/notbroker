@@ -2,6 +2,8 @@ import {
   ACCOUNT_CURRENCY,
   EXPIRATIONS,
   type Expiration,
+  entryWindow,
+  entryWindowMs,
   expiryFor,
   type InstrumentDto,
   MIN_STAKE,
@@ -59,7 +61,10 @@ export function TradeTicket({ instrument }: { instrument: InstrumentDto }) {
   const stake = parseStake(shownStake)
   const overBalance = stake !== null && balance !== null && Number(stake) > balance
   const profit = stake ? Number(stake) * Number(PAYOUT_RATE) : 0
-  const expiresAt = expiryFor(now, expiration)
+  const entry = entryWindow(now, expiration)
+  // Fora da janela, mostra a vela em que dá para entrar a seguir.
+  const expiresAt = expiryFor(entry.open ? now : entry.nextOpensAt, expiration)
+  const blocked = !instrument.tradable || !stake || overBalance || !entry.open
 
   const openTrade = useMutation({
     mutationFn: api.openTrade,
@@ -148,11 +153,22 @@ export function TradeTicket({ instrument }: { instrument: InstrumentDto }) {
         </p>
       )}
 
+      {instrument.tradable && (
+        <p className={`entry-window ${entry.open ? 'open' : 'closed'}`}>
+          {entry.open
+            ? `Entrada aberta · fecha em ${formatCountdown(entry.closesAt - now)}`
+            : `Entrada fechada · abre em ${formatCountdown(entry.nextOpensAt - now)}`}
+          <span className="small">
+            Só nos primeiros {entryWindowMs(expiration) / 1000} s de cada vela de {expiration}
+          </span>
+        </p>
+      )}
+
       <div className="direction-buttons">
         <button
           type="button"
           className="primary buy"
-          disabled={!instrument.tradable || !stake || overBalance || openTrade.isPending}
+          disabled={blocked || openTrade.isPending}
           onClick={() => submit('buy')}
         >
           ▲ Compra
@@ -161,7 +177,7 @@ export function TradeTicket({ instrument }: { instrument: InstrumentDto }) {
         <button
           type="button"
           className="primary sell"
-          disabled={!instrument.tradable || !stake || overBalance || openTrade.isPending}
+          disabled={blocked || openTrade.isPending}
           onClick={() => submit('sell')}
         >
           ▼ Venda

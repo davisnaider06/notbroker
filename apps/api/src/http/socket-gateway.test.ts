@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { mergeTick, type TickWindow } from './socket-gateway.ts'
+import { createMessageLimiter, mergeTick, type TickWindow } from './socket-gateway.ts'
 
 describe('janela de ticks do WebSocket', () => {
   it('guarda abertura, máxima e mínima mesmo quando o preço volta', () => {
@@ -20,5 +20,20 @@ describe('janela de ticks do WebSocket', () => {
       high: '105',
       low: '97',
     })
+  })
+})
+
+describe('limite de mensagens por conexão', () => {
+  it('corta acima do limite e libera na janela seguinte', () => {
+    let now = 0
+    const withinLimit = createMessageLimiter(3, 1000, () => now)
+    expect([withinLimit(), withinLimit(), withinLimit(), withinLimit()]).toEqual([
+      true,
+      true,
+      true,
+      false,
+    ])
+    now = 1000
+    expect(withinLimit()).toBe(true)
   })
 })

@@ -11,8 +11,12 @@ export const PAYOUT_RATE = '0.70'
 export const MIN_STAKE = 1
 /** Teto de operações abertas ao mesmo tempo por usuário. */
 export const MAX_OPEN_TRADES = 20
-/** Com menos que isso para a vela fechar, a operação vai para a vela seguinte. */
-export const ENTRY_CUTOFF_SECONDS = 30
+/**
+ * Só dá para entrar nos primeiros segundos da vela: 5 s por minuto dela (1m = 5 s, 1h = 300 s).
+ * Quanto menos tempo o usuário vê o preço andar antes de decidir, menos a decisão vira aposta em
+ * resultado já visível.
+ */
+export const ENTRY_WINDOW_SECONDS_PER_MINUTE = 5
 
 /** buy = aposta que o preço fecha acima da entrada; sell = abaixo. */
 export const TRADE_DIRECTIONS = ['buy', 'sell'] as const
@@ -38,8 +42,28 @@ export const EXPIRATION_SECONDS: Record<Expiration, number> = {
  */
 export function expiryFor(nowMs: number, expiration: Expiration): number {
   const bucketMs = EXPIRATION_SECONDS[expiration] * 1000
-  const candleEnd = Math.floor(nowMs / bucketMs) * bucketMs + bucketMs
-  return candleEnd - nowMs < ENTRY_CUTOFF_SECONDS * 1000 ? candleEnd + bucketMs : candleEnd
+  return Math.floor(nowMs / bucketMs) * bucketMs + bucketMs
+}
+
+/** Duração da janela de entrada da vela, em ms. */
+export function entryWindowMs(expiration: Expiration): number {
+  return (EXPIRATION_SECONDS[expiration] / 60) * ENTRY_WINDOW_SECONDS_PER_MINUTE * 1000
+}
+
+export interface EntryWindow {
+  open: boolean
+  /** Fim da janela da vela corrente (já passou se `open` é false). */
+  closesAt: number
+  /** Abertura da próxima vela, quando abre a próxima janela. */
+  nextOpensAt: number
+}
+
+/** Janela de entrada contada da abertura da vela, no mesmo relógio UTC da expiração. */
+export function entryWindow(nowMs: number, expiration: Expiration): EntryWindow {
+  const nextOpensAt = expiryFor(nowMs, expiration)
+  const candleStart = nextOpensAt - EXPIRATION_SECONDS[expiration] * 1000
+  const closesAt = candleStart + entryWindowMs(expiration)
+  return { open: nowMs < closesAt, closesAt, nextOpensAt }
 }
 
 export const openTradeSchema = z.object({

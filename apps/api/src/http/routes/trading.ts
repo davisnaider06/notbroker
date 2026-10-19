@@ -1,5 +1,5 @@
 import { openTradeSchema, resetAccountSchema } from '@notbroker/contracts'
-import type { FastifyInstance } from 'fastify'
+import type { FastifyInstance, FastifyRequest } from 'fastify'
 import type { Auth } from '../../auth/auth.ts'
 import { currentUser, requireUser } from '../../auth/session.ts'
 import type { BinaryService } from '../../trading/binary-service.ts'
@@ -9,6 +9,18 @@ import type { BinaryService } from '../../trading/binary-service.ts'
  * O teto de operações abertas ao mesmo tempo fica no BinaryService.
  */
 export const TRADE_RATE_LIMIT = 30
+/** Bancas novas por minuto, por usuário: cada uma regrava a carteira dentro de uma transação. */
+export const RESET_RATE_LIMIT = 5
+
+/** Limite por usuário; roda depois do requireUser, então a chave é o usuário, não o IP. */
+const perUser = (name: string, max: number) => ({
+  rateLimit: {
+    max,
+    timeWindow: '1 minute',
+    hook: 'preHandler' as const,
+    keyGenerator: (request: FastifyRequest) => `${name}:${request.user?.id ?? request.ip}`,
+  },
+})
 
 export function registerTradingRoutes(
   app: FastifyInstance,
@@ -22,26 +34,20 @@ export function registerTradingRoutes(
 
     scope.get('/api/account', async (request) => binaryService.account(currentUser(request).id))
 
-    scope.post('/api/account/reset', async (request) => {
-      const { balance } = resetAccountSchema.parse(request.body)
-      return binaryService.reset(currentUser(request).id, balance)
-    })
+    scope.post(
+      '/api/account/reset',
+      { config: perUser('reset', RESET_RATE_LIMIT) },
+      async (request) => {
+        const { balance } = resetAccountSchema.parse(request.body)
+        return binaryService.reset(currentUser(request).id, balance)
+      },
+    )
 
     scope.get('/api/trades', async (request) => binaryService.list(currentUser(request).id))
 
     scope.post(
       '/api/trades',
-      {
-        config: {
-          rateLimit: {
-            max: TRADE_RATE_LIMIT,
-            timeWindow: '1 minute',
-            // Depois do requireUser: a chave é o usuário, não o IP.
-            hook: 'preHandler',
-            keyGenerator: (request) => `trades:${request.user?.id ?? request.ip}`,
-          },
-        },
-      },
+      { config: perUser('trades', TRADE_RATE_LIMIT) },
       async (request, reply) => {
         const input = openTradeSchema.parse(request.body)
         const trade = await binaryService.open(currentUser(request).id, input)

@@ -573,6 +573,25 @@ td {
   padding: 5px 0;
 }
 
+.entry-window {
+  display: grid;
+  gap: 2px;
+  padding: 8px 10px;
+  border-left: 3px solid var(--up);
+  border-radius: 3px;
+  background: var(--surface-2);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.entry-window.closed {
+  border-left-color: var(--down);
+}
+
+.entry-window .small {
+  color: var(--text-muted);
+}
+
 .direction-buttons {
   display: grid;
   grid-template-columns: 1fr 1fr;

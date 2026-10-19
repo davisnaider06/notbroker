@@ -1,5 +1,6 @@
 import {
   type AccountDto,
+  type Expiration,
   type InstrumentDto,
   MAX_OPEN_TRADES,
   type TradeDto,
@@ -10,7 +11,7 @@ import { buildApp } from './app.ts'
 import { createAuth } from './auth/auth.ts'
 import { loadEnv } from './config/env.ts'
 import { type DatabaseHandle, openDatabase } from './db/client.ts'
-import { TRADE_RATE_LIMIT } from './http/routes/trading.ts'
+import { RESET_RATE_LIMIT, TRADE_RATE_LIMIT } from './http/routes/trading.ts'
 import { CATALOG } from './market-data/catalog.ts'
 import { MarketDataHub } from './market-data/hub.ts'
 import type { MarketDataProvider } from './market-data/provider.ts'
@@ -31,15 +32,17 @@ const silentProvider: MarketDataProvider = {
 const delayedProvider: MarketDataProvider = { ...silentProvider, name: 'delayed', realtime: false }
 
 /**
- * Relógio do teste: 10 s depois da próxima virada de minuto, longe do corte de 30 s. Fica à frente
- * do relógio real porque o início da banca (cadastro) é gravado com a hora real.
+ * Relógio do teste: 1 s depois da próxima virada de minuto, dentro da janela de entrada de 5 s da
+ * vela de 1m. Fica à frente do relógio real porque o início da banca (cadastro) é gravado com a
+ * hora real.
  */
-let clock = Math.ceil(Date.now() / 60_000) * 60_000 + 10_000
+let clock = Math.ceil(Date.now() / 60_000) * 60_000 + 1_000
 let app: FastifyInstance
 let hub: MarketDataHub
 let binaryService: BinaryService
 let database: DatabaseHandle
 let cookie: string
+let windowUser: string
 
 const advance = (ms: number) => {
   clock += ms
@@ -69,18 +72,19 @@ const ENTRY_WAIT_MS = 300
  * Abre operação com o feed vivo: enquanto a ordem está em andamento, o último negócio do ativo é
  * reenviado, como faria um mercado negociando. A entrada é o primeiro negócio depois da ordem.
  */
-async function openTrade(symbol: string, direction: 'buy' | 'sell', stake = '100', as = cookie) {
+async function openTrade(
+  symbol: string,
+  direction: 'buy' | 'sell',
+  stake = '100',
+  as = cookie,
+  expiration: Expiration = '1m',
+) {
   const feed = setInterval(() => {
     const tick = hub.lastTick(symbol)
     if (tick) hub.publish({ ...tick })
   }, 5)
   try {
-    return await call<TradeDto>(
-      'POST',
-      '/api/trades',
-      { symbol, direction, stake, expiration: '1m' },
-      as,
-    )
+    return await call<TradeDto>('POST', '/api/trades', { symbol, direction, stake, expiration }, as)
   } finally {
     clearInterval(feed)
   }
@@ -101,9 +105,14 @@ async function signUp(email: string): Promise<string> {
   return response.cookies.map((c) => `${c.name}=${c.value}`).join('; ')
 }
 
-/** Leva o relógio até a expiração da operação e liquida. */
+/**
+ * Leva o relógio até a expiração e liquida. O mercado segue negociando: o último preço se repete
+ * logo depois da virada, e é esse negócio que fecha a vela.
+ */
 async function expire(trade: TradeDto, as = cookie): Promise<TradeDto> {
   clock = Date.parse(trade.expiresAt) + 1
+  const last = hub.lastTick(trade.symbol)
+  if (last) price(trade.symbol, last.price)
   await binaryService.settleDue()
   const { body } = await call<TradeDto[]>('GET', '/api/trades', undefined, as)
   const settled = body.find((item) => item.id === trade.id)
@@ -135,6 +144,8 @@ beforeAll(async () => {
   app = await buildApp({ auth, hub, fx, binaryService })
 
   cookie = await signUp('trader@example.com')
+  // Antes do teste de força bruta, que esgota as tentativas de login/cadastro do IP.
+  windowUser = await signUp('janela@example.com')
 })
 
 afterAll(async () => {
@@ -369,6 +380,16 @@ describe('casa de opções binárias', () => {
     expect((await openTrade('BTCUSDT', 'buy', '1')).status).toBe(201)
   })
 
+  it(`limita a ${RESET_RATE_LIMIT} bancas novas por minuto por usuário`, async () => {
+    const as = await signUp('resetador@example.com')
+    const statuses: number[] = []
+    for (let i = 0; i <= RESET_RATE_LIMIT; i++) {
+      statuses.push((await call('POST', '/api/account/reset', { balance: '100' }, as)).status)
+    }
+    expect(statuses.slice(0, RESET_RATE_LIMIT)).not.toContain(429)
+    expect(statuses.at(-1)).toBe(429)
+  })
+
   it('limita tentativas de login por IP sem bloquear a checagem de sessão', async () => {
     const statuses: number[] = []
     for (let i = 0; i < 12; i++) {
@@ -395,5 +416,70 @@ describe('casa de opções binárias', () => {
     const response = await app.inject({ method: 'GET', url: '/api/health' })
     expect(response.headers['x-content-type-options']).toBe('nosniff')
     expect(response.headers['content-security-policy']).toContain("frame-ancestors 'none'")
+  })
+})
+
+describe('janela de entrada e liquidação', () => {
+  /** Leva o relógio para `offsetMs` depois da abertura da próxima vela do tempo dado. */
+  const nextCandle = (bucketMs: number, offsetMs: number) => {
+    clock = Math.ceil(clock / bucketMs) * bucketMs + offsetMs
+  }
+
+  it('recusa fora dos 5 s da vela de 1m, com o tempo até a próxima janela', async () => {
+    nextCandle(60_000, 5_000)
+    price('BTCUSDT', '50000')
+    const { status, body } = await openTrade('BTCUSDT', 'buy', '100', windowUser)
+    expect(status).toBe(409)
+    expect(body).toMatchObject({
+      error: { code: 'ENTRY_WINDOW_CLOSED', message: expect.stringContaining('55 s') },
+    })
+    const { body: account } = await call<AccountDto>('GET', '/api/account', undefined, windowUser)
+    expect(Number(account.balance)).toBe(10_000)
+  })
+
+  it('vela de 5m aceita entrada até 25 s depois da abertura', async () => {
+    nextCandle(300_000, 20_000)
+    price('ETHUSDT', '3000')
+    expect((await openTrade('ETHUSDT', 'buy', '100', windowUser, '5m')).status).toBe(201)
+    nextCandle(300_000, 25_000)
+    price('ETHUSDT', '3000')
+    expect((await openTrade('ETHUSDT', 'buy', '100', windowUser, '5m')).status).toBe(409)
+  })
+
+  it('só liquida depois do negócio que fecha a vela', async () => {
+    nextCandle(60_000, 1_000)
+    price('SOLUSDT', '100')
+    const { body: trade } = await openTrade('SOLUSDT', 'buy', '100', windowUser)
+    const expiresAt = Date.parse(trade.expiresAt)
+    price('SOLUSDT', '110', expiresAt - 500)
+    clock = expiresAt + 1
+    await binaryService.settleDue()
+    // Ainda pode chegar negócio de antes da virada (latência da bolsa): a liquidação espera.
+    price('SOLUSDT', '95', expiresAt - 100)
+    await binaryService.settleDue()
+    const { body: open } = await call<TradeDto[]>('GET', '/api/trades', undefined, windowUser)
+    expect(open.find((item) => item.id === trade.id)?.status).toBe('open')
+
+    price('SOLUSDT', '120', expiresAt + 50)
+    const settled = await expire(trade, windowUser)
+    expect(settled.status).toBe('lost')
+    expect(Number(settled.exitPrice)).toBe(95)
+  })
+
+  it('sem negócio depois da expiração, usa o último conhecido passado o prazo', async () => {
+    nextCandle(60_000, 1_000)
+    price('XRPUSDT', '1.00')
+    const { body: trade } = await openTrade('XRPUSDT', 'buy', '100', windowUser)
+    const expiresAt = Date.parse(trade.expiresAt)
+    price('XRPUSDT', '1.05', expiresAt - 500)
+    clock = expiresAt + ENTRY_WAIT_MS - 1
+    await binaryService.settleDue()
+    const { body: waiting } = await call<TradeDto[]>('GET', '/api/trades', undefined, windowUser)
+    expect(waiting.find((item) => item.id === trade.id)?.status).toBe('open')
+
+    clock = expiresAt + ENTRY_WAIT_MS
+    await binaryService.settleDue()
+    const { body } = await call<TradeDto[]>('GET', '/api/trades', undefined, windowUser)
+    expect(body.find((item) => item.id === trade.id)).toMatchObject({ status: 'won' })
   })
 })
