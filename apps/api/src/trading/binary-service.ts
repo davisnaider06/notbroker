@@ -1,6 +1,8 @@
 import {
   ACCOUNT_CURRENCY,
   type AccountDto,
+  entryWindow,
+  entryWindowMs,
   expiryFor,
   MAX_OPEN_TRADES,
   type Market,
@@ -53,6 +55,8 @@ interface OpenTrade {
   expiresAt: number
   /** 0 para ativo que saiu do catálogo: sem regra de preço, a operação é estornada. */
   maxTickAgeMs: number
+  /** Quanto a liquidação espera pelo negócio que fecha a vela antes de usar o último conhecido. */
+  settleGraceMs: number
   /** Último negócio até a expiração, capturado pelo primeiro tick que chega depois dela. */
   exitTick?: Tick
 }
@@ -62,7 +66,10 @@ export interface BinaryServiceOptions {
   now?: () => number
   /** Desligado nos testes, que chamam settleDue() na mão. */
   autoSettle?: boolean
-  /** Espera pelo negócio de entrada; os testes usam um prazo curto. */
+  /**
+   * Espera pelo negócio de entrada e, na expiração, pelo negócio que fecha a vela. Os testes usam
+   * um prazo curto.
+   */
   entryWaitMs?: Partial<Record<Market, number>>
 }
 
@@ -226,8 +233,18 @@ export class BinaryService {
         'Binária indisponível nesse mercado: a cotação chega com atraso. Só o gráfico está liberado.',
       )
     }
-    // A expiração conta de quando a ordem chegou: é a vela que o usuário viu ao clicar.
+    // A expiração e a janela de entrada contam de quando a ordem chegou, no relógio do servidor.
     const now = this.#now()
+    const window = entryWindow(now, input.expiration)
+    if (!window.open) {
+      const seconds = entryWindowMs(input.expiration) / 1000
+      const wait = Math.ceil((window.nextOpensAt - now) / 1000)
+      throw new AppError(
+        409,
+        'ENTRY_WINDOW_CLOSED',
+        `Entrada só nos primeiros ${seconds} s da vela de ${input.expiration}. A próxima janela abre em ${wait} s.`,
+      )
+    }
     // Entrada no primeiro negócio depois da ordem, nunca no último antes dela. O último pode ter
     // segundos de idade (IEX parado, feed travado), e quem acompanha o mercado em outra fonte já
     // sabe para onde o preço foi. O próximo negócio ninguém conhece na hora do clique.
@@ -301,8 +318,10 @@ export class BinaryService {
   }
 
   /**
-   * Liquida o que venceu, no preço vigente no momento da expiração. Se o feed estava parado naquele
-   * instante, o último preço não é o da expiração: a operação é estornada.
+   * Liquida o que venceu, no preço vigente no momento da expiração. Espera o primeiro negócio
+   * depois dela: até ele chegar, ainda pode vir negócio de antes da virada (latência da bolsa), e é
+   * ele que fecha a vela no gráfico. Se o feed estava parado naquele instante, o último preço não é
+   * o da expiração: a operação é estornada.
    */
   async settleDue(): Promise<void> {
     if (this.#settling) return
@@ -311,6 +330,7 @@ export class BinaryService {
       const now = this.#now()
       for (const trade of this.#open.values()) {
         if (trade.expiresAt > now) continue
+        if (trade.exitTick === undefined && now < trade.expiresAt + trade.settleGraceMs) continue
         try {
           // Sem tick depois da expiração, o último negócio conhecido é o vigente naquele instante.
           const exit = trade.exitTick ?? this.#hub.lastTick(trade.symbol)
@@ -368,7 +388,13 @@ export class BinaryService {
       symbol: row.symbol,
       expiresAt: row.expiresAt.getTime(),
       maxTickAgeMs: maxTickAgeFor(row.symbol),
+      settleGraceMs: this.#settleGraceFor(row.symbol),
     })
+  }
+
+  #settleGraceFor(symbol: string): number {
+    const instrument = findInstrument(symbol)
+    return instrument ? this.#entryWaitMs[instrument.market] : 0
   }
 
   #emit(userId: string, trade: TradeDto): void {

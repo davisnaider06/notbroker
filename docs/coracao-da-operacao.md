@@ -23,7 +23,7 @@ programa CoracaoDaOperacao
 const real   PAYOUT              = 0.70   // acerto paga +70% do valor apostado
 const real   VALOR_MINIMO        = 1.00   // em reais
 const inteiro MAX_ABERTAS        = 20     // operações abertas ao mesmo tempo, por usuário
-const inteiro CORTE_SEGUNDOS     = 30     // faltando menos que isso, vai para a vela seguinte
+const inteiro JANELA_POR_MINUTO  = 5      // segundos de entrada por minuto de vela (1m = 5 s, 1h = 300 s)
 
 // Quanto tempo a abertura espera pelo próximo negócio do ativo
 const inteiro ESPERA_ENTRADA_MS[CRIPTO] = 3000
@@ -51,6 +51,12 @@ inicio
         erro "Binária indisponível nesse mercado: só o gráfico"
 
     agora <- relogio()                       // hora em que a ordem chegou
+
+    // Só dá para entrar nos primeiros segundos da vela, contados da abertura dela no
+    // relógio UTC (o mesmo do vencimento). Fora disso, recusa e diz quando abre a próxima.
+    inicio_da_vela <- vencimento(agora, expiracao) - segundos_de(expiracao) * 1000
+    se agora - inicio_da_vela >= segundos_de(expiracao) / 60 * JANELA_POR_MINUTO * 1000 entao
+        erro "Entrada só nos primeiros segundos da vela. A próxima janela abre em N s."
 
     // O preço de entrada é o PRIMEIRO negócio DEPOIS da ordem, nunca o último antes dela.
     // O último pode ter segundos de idade (feed travado, ação parada no IEX), e quem olha
@@ -101,13 +107,7 @@ fim
 funcao inteiro vencimento(agora_ms, expiracao)
 inicio
     tamanho_vela <- segundos_de(expiracao) * 1000
-    fim_da_vela  <- piso(agora_ms / tamanho_vela) * tamanho_vela + tamanho_vela
-
-    // Faltando menos de 30 s, entrar agora seria quase adivinhar o fechamento.
-    se fim_da_vela - agora_ms < CORTE_SEGUNDOS * 1000 entao
-        retorne fim_da_vela + tamanho_vela
-    senao
-        retorne fim_da_vela
+    retorne piso(agora_ms / tamanho_vela) * tamanho_vela + tamanho_vela
 fim
 
 
@@ -159,8 +159,13 @@ procedimento liquidar_vencidas()
 inicio
     para cada operacao em abertas faca
         se operacao.vence_em <= relogio() entao
-            // Sem negócio depois do vencimento, o último conhecido é o que valia nele.
             negocio <- operacao.saida_capturada
+
+            // Espera o primeiro negócio depois do vencimento: até ele chegar, ainda pode vir
+            // negócio de antes da virada (latência da bolsa), e é ele que fecha a vela no
+            // gráfico. Passado o prazo sem negócio, o último conhecido é o que valia.
+            se negocio = nenhum e relogio() < operacao.vence_em + ESPERA_ENTRADA_MS[mercado_do(operacao.ativo)] entao
+                continue
             se negocio = nenhum entao
                 negocio <- ultimo_negocio[operacao.ativo]
 

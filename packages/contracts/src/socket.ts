@@ -4,6 +4,8 @@ import type { TradeDto } from './trades.ts'
 export const clientMessageSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('subscribe'), symbols: z.array(z.string()).max(50) }),
   z.object({ type: z.literal('unsubscribe'), symbols: z.array(z.string()).max(50) }),
+  /** Acerto de relógio: `sentAt` é o Date.now() do navegador, devolvido no pong. */
+  z.object({ type: z.literal('ping'), sentAt: z.number() }),
 ])
 
 export type ClientMessage = z.infer<typeof clientMessageSchema>
@@ -24,4 +26,6 @@ export type ServerMessage =
       low: string
     }
   | { type: 'trade'; trade: TradeDto }
+  /** Relógio do servidor, que decide expiração e janela de entrada. */
+  | { type: 'pong'; sentAt: number; serverTime: number }
   | { type: 'error'; message: string }

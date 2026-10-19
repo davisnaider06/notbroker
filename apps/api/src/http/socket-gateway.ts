@@ -20,6 +20,35 @@ export interface TickWindow extends Tick {
 
 const MINUTE_MS = 60_000
 
+/**
+ * Mensagens por janela, por conexão. A tela manda poucas (assinar ao trocar de ativo, um ping a
+ * cada 30 s); acima disso é script, e cada assinatura custa um snapshot de volta.
+ */
+export const SOCKET_MESSAGE_LIMIT = 30
+export const SOCKET_MESSAGE_WINDOW_MS = 10_000
+/** Conexões abertas ao mesmo tempo por usuário: uma por aba. */
+export const MAX_SOCKETS_PER_USER = 5
+/** Código de fechamento do WebSocket para violação de política (RFC 6455). */
+const POLICY_VIOLATION = 1008
+
+/** Janela fixa de contagem: true enquanto a conexão está dentro do limite. */
+export function createMessageLimiter(
+  limit: number,
+  windowMs: number,
+  now: () => number = Date.now,
+): () => boolean {
+  let windowStart = now()
+  let count = 0
+  return () => {
+    if (now() - windowStart >= windowMs) {
+      windowStart = now()
+      count = 0
+    }
+    count += 1
+    return count <= limit
+  }
+}
+
 /** Soma um negócio à janela: mantém a abertura, estende máxima/mínima e atualiza o último preço. */
 export function mergeTick(window: TickWindow | undefined, tick: Tick): TickWindow {
   if (!window) return { ...tick, open: tick.price, high: tick.price, low: tick.price }
@@ -80,6 +109,13 @@ export function registerSocketGateway(
   }, FLUSH_INTERVAL_MS)
 
   const stopTrades = binaryService.onTradeUpdate((userId, trade) => {
+    // Os negócios que fecharam a vela vão antes do resultado: senão a tela mostra win/loss com o
+    // gráfico ainda na vela anterior, esperando o próximo envio.
+    const window = pending.get(trade.symbol)
+    if (window) {
+      pending.delete(trade.symbol)
+      broadcast([window])
+    }
     for (const [socket, client] of clients) {
       if (client.userId === userId) send(socket, { type: 'trade', trade })
     }
@@ -92,10 +128,21 @@ export function registerSocketGateway(
   })
 
   app.get('/ws', { websocket: true, preValidation: requireUser(auth) }, (socket, request) => {
-    const client: Client = { userId: currentUser(request).id, symbols: new Set() }
+    const userId = currentUser(request).id
+    const open = [...clients.values()].filter((client) => client.userId === userId).length
+    if (open >= MAX_SOCKETS_PER_USER) {
+      send(socket, { type: 'error', message: `Limite de ${MAX_SOCKETS_PER_USER} abas abertas` })
+      return socket.close(POLICY_VIOLATION, 'too many connections')
+    }
+    const client: Client = { userId, symbols: new Set() }
     clients.set(socket, client)
+    const withinLimit = createMessageLimiter(SOCKET_MESSAGE_LIMIT, SOCKET_MESSAGE_WINDOW_MS)
 
     socket.on('message', (raw) => {
+      if (!withinLimit()) {
+        send(socket, { type: 'error', message: 'Muitas mensagens: conexão encerrada' })
+        return socket.close(POLICY_VIOLATION, 'rate limited')
+      }
       let payload: unknown
       try {
         payload = JSON.parse(raw.toString())
@@ -106,6 +153,9 @@ export function registerSocketGateway(
       if (!parsed.success) return send(socket, { type: 'error', message: 'Mensagem inválida' })
 
       const message = parsed.data
+      if (message.type === 'ping') {
+        return send(socket, { type: 'pong', sentAt: message.sentAt, serverTime: Date.now() })
+      }
       for (const symbol of message.symbols) {
         if (!findInstrument(symbol)) continue
         if (message.type === 'subscribe') {

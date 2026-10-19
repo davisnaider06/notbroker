@@ -28,6 +28,7 @@ import { ApiError, api, queryKeys } from '../../lib/api.ts'
 import { useMoneyFormatter } from '../../lib/display-currency.ts'
 import { formatCountdown, formatMoney, formatNumber, priceDecimals } from '../../lib/format.ts'
 import { marketStream, useLivePrice } from '../../lib/market-stream.ts'
+import { serverNow } from '../../lib/server-clock.ts'
 
 const INTERVAL_SECONDS: Record<CandleInterval, number> = {
   '1m': 60,
@@ -331,7 +332,7 @@ export function PriceChart({ instrument }: { instrument: InstrumentDto }) {
       const timeScale = chart.timeScale()
       const paneWidth = timeScale.width()
       const paneHeight = container.clientHeight - timeScale.height()
-      const now = Date.now()
+      const now = serverNow()
       for (const line of lines) {
         const expiresAt = Number(line.dataset.expires)
         // A vela i ocupa [início, início + intervalo) centrada em i: o fim dela fica em i + 0,5.
@@ -371,7 +372,7 @@ export function PriceChart({ instrument }: { instrument: InstrumentDto }) {
       const headerTimer = nextCandleRef.current
       if (!badge || !headerTimer) return
       const candle = lastCandleRef.current
-      const now = Date.now()
+      const now = serverNow()
       // Mercado fechado: o último candle já terminou e não há o que contar.
       const isCurrent = candle !== null && candle.time * 1000 + bucketMs > now
       headerTimer.hidden = !isCurrent

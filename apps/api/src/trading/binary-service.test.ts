@@ -1,4 +1,4 @@
-import { expiryFor } from '@notbroker/contracts'
+import { entryWindow, expiryFor } from '@notbroker/contracts'
 import { Decimal } from 'decimal.js'
 import { describe, expect, it } from 'vitest'
 import { outcome, payoutFor } from './binary-service.ts'
@@ -23,11 +23,27 @@ describe('regras da binária', () => {
     expect(payoutFor('lost', new Decimal(100), rate).toNumber()).toBe(0)
   })
 
-  it('expira no fechamento da vela; com menos de 30 s, vai para a seguinte', () => {
-    expect(expiryFor(at(13, 0, 10), '1m')).toBe(at(13, 1, 0))
-    expect(expiryFor(at(13, 0, 30), '1m')).toBe(at(13, 1, 0))
-    expect(expiryFor(at(13, 0, 31), '1m')).toBe(at(13, 2, 0))
+  it('expira no fechamento da vela corrente', () => {
+    expect(expiryFor(at(13, 0, 0), '1m')).toBe(at(13, 1, 0))
+    expect(expiryFor(at(13, 0, 59), '1m')).toBe(at(13, 1, 0))
     expect(expiryFor(at(13, 2, 0), '5m')).toBe(at(13, 5, 0))
-    expect(expiryFor(at(13, 4, 45), '5m')).toBe(at(13, 10, 0))
+    expect(expiryFor(at(13, 30, 0), '1h')).toBe(at(14, 0, 0))
+  })
+
+  it('entrada só nos primeiros 5 s por minuto de vela, contados da abertura UTC', () => {
+    expect(entryWindow(at(13, 0, 0), '1m').open).toBe(true)
+    expect(entryWindow(Date.UTC(2026, 9, 8, 13, 0, 4, 999), '1m').open).toBe(true)
+    expect(entryWindow(at(13, 0, 5), '1m')).toEqual({
+      open: false,
+      closesAt: at(13, 0, 5),
+      nextOpensAt: at(13, 1, 0),
+    })
+    // 5m = 25 s, 15m = 75 s, 1h = 300 s, sempre desde a abertura da vela daquele tempo.
+    expect(entryWindow(at(13, 5, 24), '5m').open).toBe(true)
+    expect(entryWindow(at(13, 5, 25), '5m').open).toBe(false)
+    expect(entryWindow(at(13, 16, 14), '15m').open).toBe(true)
+    expect(entryWindow(at(13, 16, 15), '15m').open).toBe(false)
+    expect(entryWindow(at(13, 4, 59), '1h').open).toBe(true)
+    expect(entryWindow(at(13, 5, 0), '1h').open).toBe(false)
   })
 })

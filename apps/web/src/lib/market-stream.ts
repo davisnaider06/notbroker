@@ -1,5 +1,11 @@
 import type { ClientMessage, ServerMessage, TradeDto } from '@notbroker/contracts'
 import { useCallback, useEffect, useMemo, useSyncExternalStore } from 'react'
+import { recordPong } from './server-clock.ts'
+
+/** Pings logo depois de conectar, para acertar o relógio rápido; depois, um a cada 30 s. */
+const STARTUP_PINGS = 4
+const STARTUP_PING_SPACING_MS = 1_000
+const PING_EVERY_MS = 30_000
 
 export interface LivePrice {
   price: number
@@ -23,6 +29,7 @@ class MarketStream {
   #socket: WebSocket | undefined
   #retry = 0
   #active = false
+  #pingTimer: ReturnType<typeof setTimeout> | undefined
   readonly #refCounts = new Map<string, number>()
   readonly #prices = new Map<string, LivePrice>()
   readonly #priceListeners = new Map<string, Set<Listener>>()
@@ -36,6 +43,7 @@ class MarketStream {
 
   disconnect(): void {
     this.#active = false
+    clearTimeout(this.#pingTimer)
     this.#socket?.close()
     this.#socket = undefined
   }
@@ -85,9 +93,11 @@ class MarketStream {
       this.#retry = 0
       const symbols = [...this.#refCounts.keys()]
       if (symbols.length > 0) this.#send({ type: 'subscribe', symbols })
+      this.#schedulePings(0)
     })
     socket.addEventListener('message', (event) => this.#handle(JSON.parse(event.data as string)))
     socket.addEventListener('close', () => {
+      clearTimeout(this.#pingTimer)
       if (!this.#active) return
       const delay = Math.min(15_000, 500 * 2 ** this.#retry++)
       setTimeout(() => this.#active && this.#open(), delay)
@@ -111,7 +121,15 @@ class MarketStream {
       for (const listener of this.#priceListeners.get(message.symbol) ?? []) listener()
     } else if (message.type === 'trade') {
       for (const listener of this.#tradeListeners) listener(message.trade)
+    } else if (message.type === 'pong') {
+      recordPong(message.sentAt, message.serverTime)
     }
+  }
+
+  #schedulePings(sent: number): void {
+    this.#send({ type: 'ping', sentAt: Date.now() })
+    const delay = sent + 1 < STARTUP_PINGS ? STARTUP_PING_SPACING_MS : PING_EVERY_MS
+    this.#pingTimer = setTimeout(() => this.#schedulePings(sent + 1), delay)
   }
 
   #send(message: ClientMessage): void {
