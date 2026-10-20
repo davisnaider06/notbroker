@@ -7,6 +7,7 @@ import {
 } from '@notbroker/contracts'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
+import { useAccountKind } from '../../lib/account-kind.tsx'
 import { api, queryKeys } from '../../lib/api.ts'
 import { formatMoney, formatNumber, formatTime } from '../../lib/format.ts'
 
@@ -17,14 +18,15 @@ const tone = (value: number) => (value > 0 ? 'up' : value < 0 ? 'down' : '')
 
 const QUICK_BALANCES = ['100', '1000', '10000']
 
-/** Desempenho da banca atual e o botão de começar outra. */
+/** Desempenho da banca atual e, na demo, o botão de começar outra. */
 export function PerformancePanel({ openCount }: { openCount: number }) {
-  const account = useQuery({ queryKey: queryKeys.account, queryFn: api.account })
+  const { kind } = useAccountKind()
+  const account = useQuery({ queryKey: queryKeys.account(kind), queryFn: () => api.account(kind) })
   if (!account.data) return <p className="muted pad">Carregando…</p>
   return (
     <div className="performance">
       <Stats account={account.data} />
-      <ResetForm openCount={openCount} />
+      {kind === 'demo' && <ResetForm openCount={openCount} />}
     </div>
   )
 }
@@ -40,7 +42,9 @@ function Stats({ account }: { account: AccountDto }) {
   return (
     <section>
       <p className="muted small">
-        Banca de {money(account.startingBalance)} desde {formatTime(account.startedAt)}
+        {account.account === 'real'
+          ? `Conta real desde ${formatTime(account.startedAt)}`
+          : `Banca de ${money(account.startingBalance)} desde ${formatTime(account.startedAt)}`}
       </p>
       <dl className="stat-grid">
         <div>
@@ -94,8 +98,8 @@ function ResetForm({ openCount }: { openCount: number }) {
   const reset = useMutation({
     mutationFn: api.resetAccount,
     onSuccess: (account) => {
-      queryClient.setQueryData(queryKeys.account, account)
-      void queryClient.invalidateQueries({ queryKey: queryKeys.trades })
+      queryClient.setQueryData(queryKeys.account('demo'), account)
+      void queryClient.invalidateQueries({ queryKey: queryKeys.trades('demo') })
       setConfirming(false)
     },
     onError: () => setConfirming(false),

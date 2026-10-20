@@ -4,12 +4,15 @@ import { buildApp } from './app.ts'
 import { createAuth } from './auth/auth.ts'
 import { loadEnv } from './config/env.ts'
 import { openDatabase } from './db/client.ts'
+import { WEBHOOK_PATH } from './http/routes/payments.ts'
 import { CATALOG } from './market-data/catalog.ts'
 import { YahooFx } from './market-data/fx.ts'
 import { MarketDataHub } from './market-data/hub.ts'
 import { AlpacaProvider } from './market-data/providers/alpaca.ts'
 import { BinanceProvider } from './market-data/providers/binance.ts'
 import { YahooProvider } from './market-data/providers/yahoo.ts'
+import { PaymentsService } from './payments/payments-service.ts'
+import { VizzionPayGateway } from './payments/vizzionpay.ts'
 import { syncCatalog } from './trading/accounts.ts'
 import { BinaryService } from './trading/binary-service.ts'
 
@@ -40,9 +43,28 @@ logger.info(`ações dos EUA via ${alpaca ? 'Alpaca (WebSocket)' : 'Yahoo (polli
 
 const auth = createAuth(database.db, env)
 const binaryService = new BinaryService(database.db, hub, logger)
+const gateway =
+  env.VIZZIONPAY_PUBLIC_KEY && env.VIZZIONPAY_SECRET_KEY
+    ? new VizzionPayGateway({
+        baseUrl: env.VIZZIONPAY_URL,
+        publicKey: env.VIZZIONPAY_PUBLIC_KEY,
+        secretKey: env.VIZZIONPAY_SECRET_KEY,
+      })
+    : undefined
+const publicUrl = new URL(env.PUBLIC_URL ?? env.BETTER_AUTH_URL)
+// O gateway não alcança localhost (e recusa a URL): em dev, só a consulta atualiza o status.
+const callbackUrl = ['localhost', '127.0.0.1'].includes(publicUrl.hostname)
+  ? undefined
+  : new URL(WEBHOOK_PATH, publicUrl.origin).toString()
+const payments = new PaymentsService(database.db, gateway, logger, { callbackUrl })
+logger.info(
+  gateway
+    ? `conta real ligada (VizzionPay), webhook ${callbackUrl ?? 'desligado em localhost'}`
+    : 'conta real desligada: sem chaves da VizzionPay',
+)
 const production = env.NODE_ENV === 'production'
 const app = await buildApp(
-  { auth, hub, fx: new YahooFx(logger), binaryService },
+  { auth, hub, fx: new YahooFx(logger), binaryService, payments },
   {
     logger,
     trustProxy: env.TRUST_PROXY,
@@ -54,11 +76,13 @@ const app = await buildApp(
 )
 
 await binaryService.start()
+payments.start()
 hub.start(CATALOG)
 await app.listen({ port: env.PORT, host: '0.0.0.0' })
 
 const shutdown = async () => {
   binaryService.stop()
+  payments.stop()
   hub.stop()
   await app.close()
   await database.close()

@@ -15,6 +15,7 @@ import { RESET_RATE_LIMIT, TRADE_RATE_LIMIT } from './http/routes/trading.ts'
 import { CATALOG } from './market-data/catalog.ts'
 import { MarketDataHub } from './market-data/hub.ts'
 import type { MarketDataProvider } from './market-data/provider.ts'
+import { PaymentsService } from './payments/payments-service.ts'
 import { syncCatalog } from './trading/accounts.ts'
 import { BinaryService } from './trading/binary-service.ts'
 
@@ -32,11 +33,12 @@ const silentProvider: MarketDataProvider = {
 const delayedProvider: MarketDataProvider = { ...silentProvider, name: 'delayed', realtime: false }
 
 /**
- * Relógio do teste: 1 s depois da próxima virada de minuto, dentro da janela de entrada de 5 s da
- * vela de 1m. Fica à frente do relógio real porque o início da banca (cadastro) é gravado com a
- * hora real.
+ * Relógio do teste: 1 s depois de uma virada de minuto, dentro da janela de entrada de 5 s da
+ * vela de 1m. Fica pelo menos 1 min à frente do relógio real porque o início da banca (cadastro) é
+ * gravado com a hora real: com folga menor, um beforeAll lento (suíte em paralelo) cadastra depois
+ * do horário do teste e as primeiras operações saem do desempenho.
  */
-let clock = Math.ceil(Date.now() / 60_000) * 60_000 + 1_000
+let clock = Math.ceil(Date.now() / 60_000) * 60_000 + 61_000
 let app: FastifyInstance
 let hub: MarketDataHub
 let binaryService: BinaryService
@@ -141,7 +143,9 @@ beforeAll(async () => {
   const fx = {
     rates: async () => ({ perUsd: { USD: 1, EUR: 0.9, GBP: 0.8, BRL: 5 }, updatedAt: 0 }),
   }
-  app = await buildApp({ auth, hub, fx, binaryService })
+  // Sem gateway: a conta real fica desligada. Pagamentos têm o próprio teste.
+  const payments = new PaymentsService(database.db, undefined, console)
+  app = await buildApp({ auth, hub, fx, binaryService, payments })
 
   cookie = await signUp('trader@example.com')
   // Antes do teste de força bruta, que esgota as tentativas de login/cadastro do IP.

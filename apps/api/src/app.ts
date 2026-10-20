@@ -5,12 +5,14 @@ import type { Auth } from './auth/auth.ts'
 import { registerAuthRoutes } from './auth/session.ts'
 import { registerErrorHandler } from './http/error-handler.ts'
 import { registerMarketRoutes } from './http/routes/market.ts'
+import { registerPaymentRoutes } from './http/routes/payments.ts'
 import { registerTradingRoutes } from './http/routes/trading.ts'
 import { registerSecurityHeaders } from './http/security-headers.ts'
 import { registerSocketGateway } from './http/socket-gateway.ts'
 import { registerWebStatic } from './http/web-static.ts'
 import type { FxSource } from './market-data/fx.ts'
 import type { MarketDataHub } from './market-data/hub.ts'
+import type { PaymentsService } from './payments/payments-service.ts'
 import { AppError } from './shared/errors.ts'
 import type { BinaryService } from './trading/binary-service.ts'
 
@@ -19,6 +21,7 @@ export interface AppDependencies {
   hub: MarketDataHub
   fx: FxSource
   binaryService: BinaryService
+  payments: PaymentsService
 }
 
 export interface AppOptions {
@@ -62,7 +65,8 @@ export async function buildApp(
   registerAuthRoutes(app, deps.auth)
   registerMarketRoutes(app, deps.hub, deps.fx)
   registerTradingRoutes(app, deps.auth, deps.binaryService)
-  registerSocketGateway(app, deps.auth, deps.hub, deps.binaryService)
+  registerPaymentRoutes(app, deps.auth, deps.payments)
+  registerSocketGateway(app, deps.auth, deps.hub, deps.binaryService, deps.payments)
   if (options.webDist) await registerWebStatic(app, options.webDist)
 
   return app

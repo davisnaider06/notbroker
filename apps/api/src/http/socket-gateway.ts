@@ -6,6 +6,7 @@ import { currentUser, requireUser } from '../auth/session.ts'
 import { findInstrument } from '../market-data/catalog.ts'
 import type { MarketDataHub } from '../market-data/hub.ts'
 import type { Tick } from '../market-data/provider.ts'
+import type { PaymentsService } from '../payments/payments-service.ts'
 import type { BinaryService } from '../trading/binary-service.ts'
 
 /** BTC chega a dezenas de negócios por segundo; o navegador só precisa de ~4 atualizações/s. */
@@ -75,12 +76,19 @@ export function registerSocketGateway(
   auth: Auth,
   hub: MarketDataHub,
   binaryService: BinaryService,
+  payments: PaymentsService,
 ): void {
   const clients = new Map<WebSocket, Client>()
   const pending = new Map<string, TickWindow>()
 
   const send = (socket: WebSocket, message: ServerMessage) => {
     if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(message))
+  }
+
+  const sendToUser = (userId: string, message: ServerMessage) => {
+    for (const [socket, client] of clients) {
+      if (client.userId === userId) send(socket, message)
+    }
   }
 
   const broadcast = (windows: TickWindow[]) => {
@@ -116,15 +124,21 @@ export function registerSocketGateway(
       pending.delete(trade.symbol)
       broadcast([window])
     }
-    for (const [socket, client] of clients) {
-      if (client.userId === userId) send(socket, { type: 'trade', trade })
-    }
+    sendToUser(userId, { type: 'trade', trade })
   })
+  const stopDeposits = payments.onDepositUpdate((userId, deposit) =>
+    sendToUser(userId, { type: 'deposit', deposit }),
+  )
+  const stopWithdrawals = payments.onWithdrawalUpdate((userId, withdrawal) =>
+    sendToUser(userId, { type: 'withdrawal', withdrawal }),
+  )
 
   app.addHook('onClose', async () => {
     clearInterval(flushTimer)
     stopTicks()
     stopTrades()
+    stopDeposits()
+    stopWithdrawals()
   })
 
   app.get('/ws', { websocket: true, preValidation: requireUser(auth) }, (socket, request) => {

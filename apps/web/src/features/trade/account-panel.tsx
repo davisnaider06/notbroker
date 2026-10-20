@@ -9,13 +9,15 @@ import {
 } from '@notbroker/contracts'
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
+import { useAccountKind } from '../../lib/account-kind.tsx'
 import { api, queryKeys } from '../../lib/api.ts'
 import { formatCountdown, formatMoney, formatPrice, formatTime } from '../../lib/format.ts'
 import { useLivePrice } from '../../lib/market-stream.ts'
 import { useNow } from '../../lib/use-now.ts'
+import { PaymentsHistory } from '../payments/payments-history.tsx'
 import { PerformancePanel } from './performance-panel.tsx'
 
-type Tab = 'open' | 'history' | 'performance'
+type Tab = 'open' | 'history' | 'performance' | 'payments'
 
 const DIRECTION_LABEL: Record<TradeDirection, string> = { buy: '▲ Compra', sell: '▼ Venda' }
 
@@ -30,7 +32,10 @@ const money = (value: string | number) => formatMoney(value, ACCOUNT_CURRENCY)
 
 export function AccountPanel({ instruments }: { instruments: InstrumentDto[] }) {
   const [tab, setTab] = useState<Tab>('open')
-  const trades = useQuery({ queryKey: queryKeys.trades, queryFn: api.trades })
+  const { kind } = useAccountKind()
+  const trades = useQuery({ queryKey: queryKeys.trades(kind), queryFn: () => api.trades(kind) })
+  // Movimentações só existem na conta real.
+  const shown = kind === 'demo' && tab === 'payments' ? 'open' : tab
 
   const currencyOf = (symbol: string): Currency =>
     instruments.find((instrument) => instrument.symbol === symbol)?.currency ?? 'USD'
@@ -42,29 +47,38 @@ export function AccountPanel({ instruments }: { instruments: InstrumentDto[] }) 
       <div className="tabs">
         <button
           type="button"
-          className={tab === 'open' ? 'active' : ''}
+          className={shown === 'open' ? 'active' : ''}
           onClick={() => setTab('open')}
         >
           Operações abertas ({open.length})
         </button>
         <button
           type="button"
-          className={tab === 'history' ? 'active' : ''}
+          className={shown === 'history' ? 'active' : ''}
           onClick={() => setTab('history')}
         >
           Histórico
         </button>
         <button
           type="button"
-          className={tab === 'performance' ? 'active' : ''}
+          className={shown === 'performance' ? 'active' : ''}
           onClick={() => setTab('performance')}
         >
           Desempenho
         </button>
+        {kind === 'real' && (
+          <button
+            type="button"
+            className={shown === 'payments' ? 'active' : ''}
+            onClick={() => setTab('payments')}
+          >
+            Movimentações
+          </button>
+        )}
       </div>
 
       <div className="table-scroll">
-        {tab === 'open' &&
+        {shown === 'open' &&
           (open.length === 0 ? (
             <p className="muted pad">Nenhuma operação aberta.</p>
           ) : (
@@ -88,7 +102,7 @@ export function AccountPanel({ instruments }: { instruments: InstrumentDto[] }) 
             </table>
           ))}
 
-        {tab === 'history' &&
+        {shown === 'history' &&
           (history.length === 0 ? (
             <p className="muted pad">Nenhuma operação fechada ainda.</p>
           ) : (
@@ -113,7 +127,8 @@ export function AccountPanel({ instruments }: { instruments: InstrumentDto[] }) 
             </table>
           ))}
 
-        {tab === 'performance' && <PerformancePanel openCount={open.length} />}
+        {shown === 'performance' && <PerformancePanel openCount={open.length} />}
+        {shown === 'payments' && <PaymentsHistory />}
       </div>
     </section>
   )

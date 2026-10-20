@@ -1,4 +1,10 @@
-import type { ClientMessage, ServerMessage, TradeDto } from '@notbroker/contracts'
+import type {
+  ClientMessage,
+  DepositDto,
+  ServerMessage,
+  TradeDto,
+  WithdrawalDto,
+} from '@notbroker/contracts'
 import { useCallback, useEffect, useMemo, useSyncExternalStore } from 'react'
 import { recordPong } from './server-clock.ts'
 
@@ -20,6 +26,7 @@ export interface LivePrice {
 
 type Listener = () => void
 type TradeListener = (trade: TradeDto) => void
+type PaymentListener = (update: { deposit?: DepositDto; withdrawal?: WithdrawalDto }) => void
 
 /**
  * Uma conexão WebSocket por aba. Componentes assinam símbolos com contagem de referência;
@@ -34,6 +41,7 @@ class MarketStream {
   readonly #prices = new Map<string, LivePrice>()
   readonly #priceListeners = new Map<string, Set<Listener>>()
   readonly #tradeListeners = new Set<TradeListener>()
+  readonly #paymentListeners = new Set<PaymentListener>()
 
   connect(): void {
     if (this.#active) return
@@ -84,6 +92,12 @@ class MarketStream {
     return () => this.#tradeListeners.delete(listener)
   }
 
+  /** Depósito ou saque do próprio usuário mudou de status (Pix pago, saque concluído...). */
+  onPayment(listener: PaymentListener): () => void {
+    this.#paymentListeners.add(listener)
+    return () => this.#paymentListeners.delete(listener)
+  }
+
   #open(): void {
     const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
     const socket = new WebSocket(`${protocol}://${window.location.host}/ws`)
@@ -121,6 +135,10 @@ class MarketStream {
       for (const listener of this.#priceListeners.get(message.symbol) ?? []) listener()
     } else if (message.type === 'trade') {
       for (const listener of this.#tradeListeners) listener(message.trade)
+    } else if (message.type === 'deposit') {
+      for (const listener of this.#paymentListeners) listener({ deposit: message.deposit })
+    } else if (message.type === 'withdrawal') {
+      for (const listener of this.#paymentListeners) listener({ withdrawal: message.withdrawal })
     } else if (message.type === 'pong') {
       recordPong(message.sentAt, message.serverTime)
     }

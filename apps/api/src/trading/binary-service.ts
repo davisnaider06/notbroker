@@ -1,6 +1,7 @@
 import {
   ACCOUNT_CURRENCY,
   type AccountDto,
+  type AccountKind,
   entryWindow,
   entryWindowMs,
   expiryFor,
@@ -20,6 +21,7 @@ import { findInstrument } from '../market-data/catalog.ts'
 import type { MarketDataHub } from '../market-data/hub.ts'
 import type { Logger, Tick } from '../market-data/provider.ts'
 import { AppError } from '../shared/errors.ts'
+import { walletOf } from './accounts.ts'
 
 type TradeRow = typeof binaryTrades.$inferSelect
 type TradeListener = (userId: string, trade: TradeDto) => void
@@ -145,11 +147,8 @@ export class BinaryService {
     return () => this.#listeners.delete(listener)
   }
 
-  async account(userId: string): Promise<AccountDto> {
-    const [wallet] = await this.#db
-      .select()
-      .from(wallets)
-      .where(and(eq(wallets.userId, userId), eq(wallets.currency, ACCOUNT_CURRENCY)))
+  async account(userId: string, account: AccountKind = 'demo'): Promise<AccountDto> {
+    const [wallet] = await this.#db.select().from(wallets).where(walletOf(userId, account))
     if (!wallet) throw new AppError(500, 'ACCOUNT_MISSING', 'Conta não encontrada')
 
     // Agregado no banco: o histórico da tela é limitado, o desempenho não pode ser.
@@ -164,6 +163,7 @@ export class BinaryService {
       .where(
         and(
           eq(binaryTrades.userId, userId),
+          eq(binaryTrades.account, account),
           ne(binaryTrades.status, 'open'),
           gte(binaryTrades.openedAt, wallet.startedAt),
         ),
@@ -181,6 +181,7 @@ export class BinaryService {
     }
 
     return {
+      account,
       currency: ACCOUNT_CURRENCY,
       balance: wallet.balance,
       startingBalance: wallet.startingBalance,
@@ -190,22 +191,25 @@ export class BinaryService {
   }
 
   /**
-   * Começa uma banca nova com o saldo escolhido. Com operação aberta, recusa: zerar no meio dela
-   * jogaria fora um resultado que ainda não saiu.
+   * Começa uma banca demo nova com o saldo escolhido. Com operação aberta, recusa: zerar no meio
+   * dela jogaria fora um resultado que ainda não saiu. A conta real não tem reset: o saldo dela é
+   * dinheiro depositado.
    */
   async reset(userId: string, balance: string): Promise<AccountDto> {
     await this.#db.transaction(async (tx) => {
-      const [wallet] = await tx
-        .select()
-        .from(wallets)
-        .where(and(eq(wallets.userId, userId), eq(wallets.currency, ACCOUNT_CURRENCY)))
-        .for('update')
+      const [wallet] = await tx.select().from(wallets).where(walletOf(userId, 'demo')).for('update')
       if (!wallet) throw new AppError(500, 'ACCOUNT_MISSING', 'Conta não encontrada')
       // Depois do lock na carteira: uma abertura simultânea espera ou já aparece aqui.
       const [openCount] = await tx
         .select({ value: count() })
         .from(binaryTrades)
-        .where(and(eq(binaryTrades.userId, userId), eq(binaryTrades.status, 'open')))
+        .where(
+          and(
+            eq(binaryTrades.userId, userId),
+            eq(binaryTrades.account, 'demo'),
+            eq(binaryTrades.status, 'open'),
+          ),
+        )
       if ((openCount?.value ?? 0) > 0) {
         throw new AppError(
           409,
@@ -216,16 +220,16 @@ export class BinaryService {
       await tx
         .update(wallets)
         .set({ balance, startingBalance: balance, startedAt: new Date(this.#now()) })
-        .where(and(eq(wallets.userId, userId), eq(wallets.currency, ACCOUNT_CURRENCY)))
+        .where(walletOf(userId, 'demo'))
     })
-    return this.account(userId)
+    return this.account(userId, 'demo')
   }
 
-  async list(userId: string): Promise<TradeDto[]> {
+  async list(userId: string, account: AccountKind = 'demo'): Promise<TradeDto[]> {
     const rows = await this.#db
       .select()
       .from(binaryTrades)
-      .where(eq(binaryTrades.userId, userId))
+      .where(and(eq(binaryTrades.userId, userId), eq(binaryTrades.account, account)))
       .orderBy(desc(binaryTrades.openedAt))
       .limit(HISTORY_LIMIT)
     return rows.map(toTradeDto)
@@ -280,7 +284,7 @@ export class BinaryService {
       const [wallet] = await tx
         .select()
         .from(wallets)
-        .where(and(eq(wallets.userId, userId), eq(wallets.currency, ACCOUNT_CURRENCY)))
+        .where(walletOf(userId, input.account))
         .for('update')
       if (!wallet) throw new AppError(500, 'ACCOUNT_MISSING', 'Conta não encontrada')
       // Contado depois do lock na carteira: duas aberturas simultâneas não furam o teto.
@@ -302,11 +306,12 @@ export class BinaryService {
       await tx
         .update(wallets)
         .set({ balance: balance.minus(stake).toString() })
-        .where(and(eq(wallets.userId, userId), eq(wallets.currency, ACCOUNT_CURRENCY)))
+        .where(walletOf(userId, input.account))
       const [inserted] = await tx
         .insert(binaryTrades)
         .values({
           userId,
+          account: input.account,
           symbol: instrument.symbol,
           direction: input.direction,
           status: 'open',
@@ -326,6 +331,7 @@ export class BinaryService {
       {
         tradeId: trade.id,
         userId,
+        account: trade.account,
         symbol: trade.symbol,
         direction: trade.direction,
         stake: trade.stake,
@@ -381,14 +387,14 @@ export class BinaryService {
       const [wallet] = await tx
         .select()
         .from(wallets)
-        .where(and(eq(wallets.userId, row.userId), eq(wallets.currency, ACCOUNT_CURRENCY)))
+        .where(walletOf(row.userId, row.account))
         .for('update')
       if (!wallet) throw new AppError(500, 'ACCOUNT_MISSING', 'Conta não encontrada')
       if (payout.greaterThan(0)) {
         await tx
           .update(wallets)
           .set({ balance: new Decimal(wallet.balance).plus(payout).toString() })
-          .where(and(eq(wallets.userId, row.userId), eq(wallets.currency, ACCOUNT_CURRENCY)))
+          .where(walletOf(row.userId, row.account))
       }
       const [updated] = await tx
         .update(binaryTrades)
@@ -404,6 +410,7 @@ export class BinaryService {
       {
         tradeId: settled.id,
         userId: settled.userId,
+        account: settled.account,
         symbol: settled.symbol,
         status: settled.status,
         entryPrice: settled.entryPrice,
@@ -473,6 +480,7 @@ export function payoutFor(status: TradeStatus, stake: Decimal, payoutRate: Decim
 function toTradeDto(row: TradeRow): TradeDto {
   return {
     id: row.id,
+    account: row.account,
     symbol: row.symbol,
     direction: row.direction,
     status: row.status,

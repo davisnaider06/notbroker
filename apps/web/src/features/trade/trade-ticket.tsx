@@ -13,6 +13,7 @@ import {
 } from '@notbroker/contracts'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
+import { useAccountKind } from '../../lib/account-kind.tsx'
 import { api, queryKeys } from '../../lib/api.ts'
 import { formatCountdown, formatMoney, formatNumber, formatPrice } from '../../lib/format.ts'
 import { marketStream } from '../../lib/market-stream.ts'
@@ -43,15 +44,16 @@ export function TradeTicket({ instrument }: { instrument: InstrumentDto }) {
   const [feedback, setFeedback] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null)
   const [lastResult, setLastResult] = useState<TradeDto | null>(null)
   const now = useNow(250)
-  const account = useQuery({ queryKey: queryKeys.account, queryFn: api.account })
+  const { kind } = useAccountKind()
+  const account = useQuery({ queryKey: queryKeys.account(kind), queryFn: () => api.account(kind) })
 
   // Resultado da última operação que fechou, venha ela de qual ativo vier.
   useEffect(
     () =>
       marketStream.onTrade((trade) => {
-        if (trade.status !== 'open') setLastResult(trade)
+        if (trade.status !== 'open' && trade.account === kind) setLastResult(trade)
       }),
-    [],
+    [kind],
   )
 
   const balance = account.data ? Number(account.data.balance) : null
@@ -73,8 +75,8 @@ export function TradeTicket({ instrument }: { instrument: InstrumentDto }) {
         kind: 'ok',
         text: `${DIRECTION_LABEL[trade.direction]} aberta a ${formatPrice(trade.entryPrice, instrument.currency)}`,
       })
-      void queryClient.invalidateQueries({ queryKey: queryKeys.account })
-      void queryClient.invalidateQueries({ queryKey: queryKeys.trades })
+      void queryClient.invalidateQueries({ queryKey: queryKeys.account(kind) })
+      void queryClient.invalidateQueries({ queryKey: queryKeys.trades(kind) })
     },
     onError: (error) => setFeedback({ kind: 'error', text: error.message }),
   })
@@ -82,13 +84,14 @@ export function TradeTicket({ instrument }: { instrument: InstrumentDto }) {
   function submit(direction: TradeDirection) {
     if (!stake) return
     setFeedback(null)
-    openTrade.mutate({ symbol: instrument.symbol, direction, stake, expiration })
+    openTrade.mutate({ symbol: instrument.symbol, direction, stake, expiration, account: kind })
   }
 
   return (
     <div className="order-ticket">
-      <p className="muted small">
-        Saldo: <strong>{account.data ? money(account.data.balance) : '—'}</strong>
+      <p className={`muted small ${kind === 'real' ? 'real-account' : ''}`}>
+        {kind === 'real' ? 'Conta real' : 'Conta demo'} · Saldo:{' '}
+        <strong>{account.data ? money(account.data.balance) : '—'}</strong>
       </p>
 
       <label>

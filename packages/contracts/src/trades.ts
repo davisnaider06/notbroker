@@ -5,6 +5,13 @@ import { z } from 'zod'
  * com a mesma regra que o servidor aplica.
  */
 export const ACCOUNT_CURRENCY = 'BRL' as const
+/**
+ * demo = banca de treino, saldo escolhido pelo usuário. real = dinheiro depositado via Pix: só
+ * sobe com depósito confirmado e só desce com operação ou saque.
+ */
+export const ACCOUNT_KINDS = ['demo', 'real'] as const
+export type AccountKind = (typeof ACCOUNT_KINDS)[number]
+export const accountKindSchema = z.enum(ACCOUNT_KINDS).default('demo')
 export const STARTING_BALANCE = '10000'
 /** Win devolve o valor apostado + 70% dele. Loss perde o valor inteiro. */
 export const PAYOUT_RATE = '0.70'
@@ -76,12 +83,14 @@ export const openTradeSchema = z.object({
     .regex(/^\d+(\.\d{1,2})?$/, 'valor deve ter no máximo 2 casas decimais')
     .refine((value) => Number(value) >= MIN_STAKE, `valor mínimo é R$ ${MIN_STAKE}`),
   expiration: z.enum(EXPIRATIONS),
+  account: accountKindSchema,
 })
 
 export type OpenTradeInput = z.infer<typeof openTradeSchema>
 
 export interface TradeDto {
   id: string
+  account: AccountKind
   symbol: string
   direction: TradeDirection
   status: TradeStatus
@@ -127,9 +136,10 @@ export interface AccountStatsDto {
 }
 
 export interface AccountDto {
+  account: AccountKind
   currency: typeof ACCOUNT_CURRENCY
   balance: string
-  /** Saldo com que a banca atual começou. */
+  /** Saldo com que a banca atual começou. Na conta real é zero: o saldo vem dos depósitos. */
   startingBalance: string
   startedAt: string
   stats: AccountStatsDto

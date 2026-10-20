@@ -1,7 +1,8 @@
 # Arquitetura
 
-NotBroker é uma casa de opções binárias simulada: cotação real, dinheiro fictício. Multiusuário
-desde o início, custo zero de infraestrutura e de dados.
+NotBroker é uma casa de opções binárias com cotação real e duas contas por usuário: a **demo**,
+com dinheiro fictício, e a **real**, com depósito e saque via Pix (VizzionPay) para um grupo fechado
+de usuários. Custo zero de infraestrutura e de dados.
 
 ## Visão geral
 
@@ -32,11 +33,12 @@ apps/api
   src/auth           Better Auth + integração com Fastify
   src/market-data    Catálogo, hub e um arquivo por provedor
   src/trading        Contas e serviço de opções binárias
+  src/payments       Cliente da VizzionPay e serviço de depósito/saque da conta real
   src/http           Rotas, tratamento de erro e gateway WebSocket
   drizzle/           Migrations SQL geradas (versionadas)
 apps/web
   src/lib            Cliente HTTP, auth, stream de mercado, formatação
-  src/features       Telas por domínio (auth, trade)
+  src/features       Telas por domínio (auth, trade, payments)
 scripts/dev.ts       Sobe API e web juntos
 ```
 
@@ -77,7 +79,9 @@ escrever outro `MarketDataProvider` e trocar a rota de `B3` em `main.ts`.
 
 Ficam em `packages/contracts/src/trades.ts`, para a tela calcular com a mesma regra do servidor.
 
-- Conta única em BRL, começando em R$ 10.000. O saldo só muda ao abrir (sai o valor) e ao fechar.
+- Duas carteiras em BRL por usuário. A demo começa em R$ 10.000 e aceita banca nova; a real começa
+  em zero e não tem reset. O saldo só muda ao abrir (sai o valor) e ao fechar, e na real também com
+  depósito e saque. Cada operação grava de qual conta saiu (`binary_trades.account`).
 - **Compra** ganha se o preço de saída ficar acima do de entrada; **venda** ganha se ficar abaixo.
 - Win devolve valor + 70% (payout gravado por operação). Loss perde o valor. Empate devolve o valor.
 - Expiração no fechamento da vela do tempo escolhido (1m, 5m, 15m, 1h), alinhada ao relógio UTC.
@@ -96,6 +100,29 @@ Ficam em `packages/contracts/src/trades.ts`, para a tela calcular com a mesma re
 - A tela conta o tempo no relógio do servidor, estimado por ping/pong no WebSocket.
 - Valor mínimo R$ 1, no máximo 2 casas decimais.
 
+## Conta real (Pix)
+
+Regras em `packages/contracts/src/payments.ts`; serviço em `apps/api/src/payments/`.
+
+- **Depósito**: R$ 10 a R$ 5.000, com CPF válido. A API cria a cobrança na VizzionPay
+  (`POST /gateway/pix/receive`, `identifier` = id do depósito) e devolve o copia e cola; a tela
+  desenha o QR Code a partir dele (o `base64` do gateway vem vazio). No máximo 3 Pix pendentes por
+  usuário: o gateway bloqueia a conta inteira com vendas pendentes demais.
+- **Saque**: mínimo R$ 200, um por vez por usuário. O valor sai do saldo no pedido, sob lock na
+  carteira. Recusado ou cancelado pelo gateway, volta ao saldo uma vez só. Sem resposta na criação
+  (timeout), fica `requested` até a consulta decidir; se em 15 min o gateway não conhece o pedido,
+  volta. O gateway exige o IPv4 do usuário (por isso `TRUST_PROXY` em produção) e o nome sem acento.
+- **Webhook** (`POST /api/webhooks/vizzionpay`, público): só serve de gatilho. O status que vale é o
+  da consulta ao gateway (`GET /gateway/transactions` ou `/gateway/transfers`), então um POST forjado
+  não credita nada. Crédito e débito acontecem só na troca de status, em transação com lock na linha.
+- **Conferência**: a cada minuto, depósitos pendentes e saques em andamento sem consulta há 5 min
+  são conferidos, até 10 por rodada (o gateway bloqueia polling). O botão "Já paguei" faz uma
+  consulta pontual.
+- **Acesso**: com `ALLOWED_EMAILS`, só esses e-mails criam conta. Em produção com as chaves da
+  VizzionPay, a lista é obrigatória.
+- A VizzionPay bloqueia requisições de fora de Brasil, EUA e Portugal (firewall da AWS, sem
+  exceção por IP): a API precisa rodar numa região aceita.
+
 ## Limites conhecidos
 
 - O catálogo é fixo em código (`market-data/catalog.ts`) e acompanhado inteiro o tempo todo. Isso é
@@ -103,8 +130,12 @@ Ficam em `packages/contracts/src/trades.ts`, para a tela calcular com a mesma re
 - "Mercado fechado" é inferido pela idade da cotação, não por calendário de pregão.
 - A B3 vem do Yahoo com ~15 min de atraso: só gráfico, sem binária, até haver feed tempo real.
 - Rate limit em memória (`@fastify/rate-limit`): vale por processo, como a liquidação.
-- Cadastro não verifica e-mail: dá para criar várias contas e ter saldo fictício infinito. Só
-  importa se houver ranking.
+- Cadastro não verifica e-mail. Na demo isso só importa se houver ranking. Na real, a allowlist
+  restringe quem entra, mas quem souber um e-mail da lista que ainda não se cadastrou pode criar a
+  conta antes do dono: cadastre todos logo depois de configurar a lista.
+- O saldo real é a soma das carteiras; o dinheiro está na conta da VizzionPay. O lucro de um usuário
+  sai das perdas dos outros: se todos ganharem ao mesmo tempo, o saque falha no gateway por saldo
+  insuficiente e o valor volta para a carteira.
 
 ## Produção
 
@@ -113,7 +144,8 @@ Vite faz em dev: cookie de sessão e WebSocket funcionam sem CORS. Rotas fora de
 `index.html`. Toda resposta sai com CSP, `nosniff`, `X-Frame-Options` e, sob HTTPS, HSTS.
 
 Variáveis obrigatórias em produção: `NODE_ENV=production`, `BETTER_AUTH_SECRET` (o valor do
-`.env.example` é recusado), `BETTER_AUTH_URL` com a URL pública, `DATABASE_URL` (Postgres).
+`.env.example` é recusado), `BETTER_AUTH_URL` com a URL pública, `DATABASE_URL` (Postgres). Para a
+conta real: `VIZZIONPAY_PUBLIC_KEY`, `VIZZIONPAY_SECRET_KEY` e `ALLOWED_EMAILS`.
 Atrás de proxy ou load balancer, `TRUST_PROXY=true` para o rate limit ver o IP real.
 
 O banco PGlite local tem trava por PID + batimento (`db/dir-lock.ts`): o dono atualiza o arquivo a

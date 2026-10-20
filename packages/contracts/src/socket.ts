@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import type { DepositDto, WithdrawalDto } from './payments.ts'
 import type { TradeDto } from './trades.ts'
 
 export const clientMessageSchema = z.discriminatedUnion('type', [
@@ -26,6 +27,9 @@ export type ServerMessage =
       low: string
     }
   | { type: 'trade'; trade: TradeDto }
+  /** Mudança de status de depósito ou saque do próprio usuário (webhook do gateway). */
+  | { type: 'deposit'; deposit: DepositDto }
+  | { type: 'withdrawal'; withdrawal: WithdrawalDto }
   /** Relógio do servidor, que decide expiração e janela de entrada. */
   | { type: 'pong'; sentAt: number; serverTime: number }
   | { type: 'error'; message: string }

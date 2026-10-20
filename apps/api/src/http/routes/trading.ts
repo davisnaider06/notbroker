@@ -1,4 +1,4 @@
-import { openTradeSchema, resetAccountSchema } from '@notbroker/contracts'
+import { accountKindSchema, openTradeSchema, resetAccountSchema } from '@notbroker/contracts'
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import type { Auth } from '../../auth/auth.ts'
 import { currentUser, requireUser } from '../../auth/session.ts'
@@ -13,7 +13,7 @@ export const TRADE_RATE_LIMIT = 30
 export const RESET_RATE_LIMIT = 5
 
 /** Limite por usuário; roda depois do requireUser, então a chave é o usuário, não o IP. */
-const perUser = (name: string, max: number) => ({
+export const perUser = (name: string, max: number) => ({
   rateLimit: {
     max,
     timeWindow: '1 minute',
@@ -32,7 +32,12 @@ export function registerTradingRoutes(
 
     scope.get('/api/me', async (request) => currentUser(request))
 
-    scope.get('/api/account', async (request) => binaryService.account(currentUser(request).id))
+    scope.get<{ Querystring: { account?: string } }>('/api/account', async (request) =>
+      binaryService.account(
+        currentUser(request).id,
+        accountKindSchema.parse(request.query.account),
+      ),
+    )
 
     scope.post(
       '/api/account/reset',
@@ -43,7 +48,9 @@ export function registerTradingRoutes(
       },
     )
 
-    scope.get('/api/trades', async (request) => binaryService.list(currentUser(request).id))
+    scope.get<{ Querystring: { account?: string } }>('/api/trades', async (request) =>
+      binaryService.list(currentUser(request).id, accountKindSchema.parse(request.query.account)),
+    )
 
     scope.post(
       '/api/trades',

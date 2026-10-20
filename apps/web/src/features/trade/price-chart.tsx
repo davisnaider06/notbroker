@@ -24,6 +24,7 @@ import {
   type UTCTimestamp,
 } from 'lightweight-charts'
 import { useEffect, useRef, useState } from 'react'
+import { useAccountKind } from '../../lib/account-kind.tsx'
 import { ApiError, api, queryKeys } from '../../lib/api.ts'
 import { useMoneyFormatter } from '../../lib/display-currency.ts'
 import { formatCountdown, formatMoney, formatNumber, priceDecimals } from '../../lib/format.ts'
@@ -226,7 +227,8 @@ export function PriceChart({ instrument }: { instrument: InstrumentDto }) {
     }
   }, [instrument.symbol, interval])
 
-  const trades = useQuery({ queryKey: queryKeys.trades, queryFn: api.trades })
+  const { kind } = useAccountKind()
+  const trades = useQuery({ queryKey: queryKeys.trades(kind), queryFn: () => api.trades(kind) })
   const openHere = (trades.data ?? []).filter(
     (trade) => trade.status === 'open' && trade.symbol === instrument.symbol,
   )

@@ -1,4 +1,10 @@
-import { CURRENCIES, MARKETS, TRADE_DIRECTIONS, TRADE_STATUSES } from '@notbroker/contracts'
+import {
+  ACCOUNT_KINDS,
+  CURRENCIES,
+  MARKETS,
+  TRADE_DIRECTIONS,
+  TRADE_STATUSES,
+} from '@notbroker/contracts'
 import {
   index,
   integer,
@@ -16,11 +22,12 @@ export const marketEnum = pgEnum('market', MARKETS)
 export const currencyEnum = pgEnum('currency', CURRENCIES)
 export const tradeDirectionEnum = pgEnum('trade_direction', TRADE_DIRECTIONS)
 export const tradeStatusEnum = pgEnum('trade_status', TRADE_STATUSES)
+export const accountKindEnum = pgEnum('account_kind', ACCOUNT_KINDS)
 
 /** numeric(30,10) cobre de satoshi a ações de 5 dígitos sem perder precisão. Drizzle devolve string. */
-const decimal = (name: string) => numeric(name, { precision: 30, scale: 10 })
+export const decimal = (name: string) => numeric(name, { precision: 30, scale: 10 })
 
-const userRef = () =>
+export const userRef = () =>
   text('user_id')
     .notNull()
     .references(() => user.id, { onDelete: 'cascade' })
@@ -34,13 +41,14 @@ export const instruments = pgTable('instruments', {
 })
 
 /**
- * Saldo da conta. Na casa de binárias só existe a carteira em BRL; `locked` sobrou do modelo
- * anterior e fica sempre zero (o valor de uma operação aberta já saiu do saldo).
+ * Saldo da conta. Cada usuário tem duas carteiras em BRL: a demo e a real. `locked` sobrou do
+ * modelo anterior e fica sempre zero (o valor de uma operação aberta já saiu do saldo).
  */
 export const wallets = pgTable(
   'wallets',
   {
     userId: userRef(),
+    account: accountKindEnum('account').notNull().default('demo'),
     currency: currencyEnum('currency').notNull(),
     balance: decimal('balance').notNull(),
     locked: decimal('locked').notNull().default('0'),
@@ -48,7 +56,7 @@ export const wallets = pgTable(
     startingBalance: decimal('starting_balance').notNull().default('10000'),
     startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [primaryKey({ columns: [table.userId, table.currency] })],
+  (table) => [primaryKey({ columns: [table.userId, table.account, table.currency] })],
 )
 
 /**
@@ -60,6 +68,8 @@ export const binaryTrades = pgTable(
   {
     id: uuid('id').primaryKey().defaultRandom(),
     userId: userRef(),
+    /** Carteira de onde saiu o valor e para onde volta o resultado. */
+    account: accountKindEnum('account').notNull().default('demo'),
     symbol: text('symbol')
       .notNull()
       .references(() => instruments.symbol),
